@@ -15,19 +15,10 @@
 #include <SPI.h>
 #include <WiFi101.h>
 
-enum wl_tcp_state {
-  CLOSED      = 0,
-  LISTEN      = 1,
-  SYN_SENT    = 2,
-  SYN_RCVD    = 3,
-  ESTABLISHED = 4,
-  FIN_WAIT_1  = 5,
-  FIN_WAIT_2  = 6,
-  CLOSE_WAIT  = 7,
-  CLOSING     = 8,
-  LAST_ACK    = 9,
-  TIME_WAIT   = 10
-};
+#define GET "GET"
+#define POST "POST"
+
+#define HTTP_RESPONSE_BUFFER_SIZE 1024
 
 WiFiClient client;
 
@@ -35,8 +26,23 @@ char ssid[] = "BELL123";     //  your network SSID (name)
 char pass[] = "2ECADD44D569";  // your network password
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
 
+char server[] = "httpbin.org";
+
 unsigned long lastConnectionTime = 0;            // last time you connected to the server, in milliseconds
-const unsigned long postingInterval = 1L * 1000L; // delay between updates, in milliseconds
+const unsigned long postingInterval = 5L * 1000L; // delay between updates, in milliseconds
+
+enum controllerState_t {
+  INITIAL,
+  RECEIVED_ID
+};
+
+controllerState_t controllerState = INITIAL;
+int myId;
+
+struct httpResponse_t {
+  int statusCode;
+  char response[HTTP_RESPONSE_BUFFER_SIZE];
+};
 
 void setup() {
 
@@ -51,24 +57,45 @@ void setup() {
 
 void loop() {
   // check the network connection once every 10 seconds:
-//  delay(10000);
-//  printCurrentNet();
+  //  delay(10000);
+  //  printCurrentNet();
+
+  switch(controllerState) {
+    case INITIAL:
+      myId = getMyId();
+      break;
+    case RECEIVED_ID:
+
+      break;
+  }
 
   // if there's incoming data from the net connection.
   // send it out the serial port.  This is for debugging
   // purposes only:
-  while (client.available()) {
-    char c = client.read();
-    Serial.write(c);
-  }
+//  while (client.available()) {
+//    char c = client.read();
+//    Serial.write(c);
+//  }
 
-  delay(100);
+  delay(5000);
 
   // if ten seconds have passed since your last connection,
   // then connect again and send data:
-  if (!client.connected() && millis() - lastConnectionTime > postingInterval) {
-    httpRequest();
-  }
+//  if (!client.connected() && millis() - lastConnectionTime > postingInterval) {
+//    httpRequest();
+//  }
+}
+
+int getMyId() {
+
+  //char response[HTTP_RESPONSE_BUFFER_SIZE];
+  httpResponse_t httpResponse;
+  httpRequest(GET, "/anything", &httpResponse);
+
+  Serial.println("Received response: ");
+  Serial.print(httpResponse.response);
+
+  return 1;
 }
 
 void connectToWiFi() {
@@ -97,35 +124,102 @@ void connectToWiFi() {
 }
 
 // this method makes a HTTP connection to the server:
-void httpRequest() {
+void httpRequest(char* method, char* path, httpResponse_t* httpResponse) {
+  int index = 0;
+  int responseBufferSize = sizeof(httpResponse->response);
 
-  char server[] = "httpbin.org";
+  bool sentRequest = false;
+  bool receivedResponse = false;
+  bool overflow = false;
+  bool done = false;
+
+  while (!done) {
+
+    sentRequest = false;
+    receivedResponse = false;
+    overflow = false;
+
+    while (!sentRequest) {
+      // close any connection before send a new request.
+      // This will free the socket on the WiFi shield
+      client.stop();
+
+      Serial.println();
+      Serial.print("Making HTTP request ");
+      Serial.print(method);
+      Serial.print(" ");
+      Serial.print(server);
+      Serial.println(path);
+      Serial.print("Buffer size ");
+      Serial.println(responseBufferSize);
+      Serial.println();
+    
+      // if there's a successful connection:
+      if (client.connect(server, 80)) {
+        client.print(method);
+        client.print(" ");
+        client.print(path);
+        client.println(" HTTP/1.1");
+        client.print("Host: ");
+        client.println(server);
+        client.println("User-Agent: ArduinoWiFi/1.1");
+        client.println("Connection: close");
+        client.println();
   
-  // close any connection before send a new request.
-  // This will free the socket on the WiFi shield
-  client.stop();
+        sentRequest = true;
+    
+        // note the time that the connection was made:
+        //lastConnectionTime = millis();
+      }
+      else {
+        // if you couldn't make a connection:
+        Serial.print("HTTP request ");
+        Serial.print(method);
+        Serial.print(" ");
+        Serial.print(path);
+        Serial.println(" failed.  Couldn't connect.");
+        Serial.println();
+      }
+    }
+  
+    while (!receivedResponse) {
+      
+      while (client.available()) {
+        receivedResponse = true;
+        char c = client.read();
+  
+        if (index < responseBufferSize - 1) {
+          httpResponse->response[index] = c;
+          ++index;
+        }
+        else {
+          overflow = true;
+          Serial.println("Error: HTTP response buffer is full");
+          break;
+        }
+      }
+      
+    }
 
-  // if there's a successful connection:
-  if (client.connect(server, 80)) {
-    Serial.println("connecting...");
-    // send the HTTP GET request:
-    client.println("GET /anything HTTP/1.1");
-    client.print("Host: ");
-    client.println(server);
-    client.println("User-Agent: ArduinoWiFi/1.1");
-    client.println("Connection: close");
-    client.println();
+    if (!overflow) {
+      done = true;
+      httpResponse->response[index] = '\0';
+      break;
+    }
 
-//    Serial.print("Connection status: ");
-//    Serial.println(clientStatus(client.status()));
+    delay(2000);
 
-    // note the time that the connection was made:
-    lastConnectionTime = millis();
   }
-  else {
-    // if you couldn't make a connection:
-    Serial.println("connection failed");
-  }
+
+  return;
+
+  //delay(100);
+
+  // if ten seconds have passed since your last connection,
+  // then connect again and send data:
+//  if (!client.connected() && millis() - lastConnectionTime > postingInterval) {
+//    httpRequest();
+//  }
 }
 
 String wifiSignalQuality(int rssi) {
@@ -140,45 +234,6 @@ String wifiSignalQuality(int rssi) {
   }
   else {
     return "Unuseable";
-  }
-}
-
-String clientStatus(int statusVal) {
-  if (statusVal == CLOSED) {
-    return "CLOSED";
-  }
-  else if (statusVal == LISTEN) {
-    return "LISTEN";
-  }
-  else if (statusVal == SYN_SENT) {
-    return "SYN_SENT";
-  }
-  else if (statusVal == SYN_RCVD) {
-    return "SYN_RCVD";
-  }
-  else if (statusVal == ESTABLISHED) {
-    return "ESTABLISHED";
-  }
-  else if (statusVal == FIN_WAIT_1) {
-    return "FIN_WAIT_1";
-  }
-  else if (statusVal == FIN_WAIT_2) {
-    return "FIN_WAIT_2";
-  }
-  else if (statusVal == CLOSE_WAIT) {
-    return "CLOSE_WAIT";
-  }
-  else if (statusVal == CLOSING) {
-    return "CLOSING";
-  }
-  else if (statusVal == LAST_ACK) {
-    return "LAST_ACK";
-  }
-  else if (statusVal == TIME_WAIT) {
-    return "TIME_WAIT";
-  }
-  else {
-    return "UNKNOWN";
   }
 }
 
