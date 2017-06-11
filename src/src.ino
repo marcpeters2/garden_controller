@@ -12,24 +12,24 @@
  modified 31 May 2012
  by Tom Igoe
  */
+#include <string.h>
 #include <SPI.h>
 #include <WiFi101.h>
+#include "HttpParser.h"
 
 #define GET "GET"
 #define POST "POST"
 
-#define HTTP_RESPONSE_BUFFER_SIZE 1024
+
 
 WiFiClient client;
 
-char ssid[] = "BELL123";     //  your network SSID (name)
-char pass[] = "2ECADD44D569";  // your network password
+const char ssid[] = "BELL123";     //  your network SSID (name)
+const char pass[] = "2ECADD44D569";  // your network password
 int status = WL_IDLE_STATUS;     // the WiFi radio's status
 
-char server[] = "httpbin.org";
-
-unsigned long lastConnectionTime = 0;            // last time you connected to the server, in milliseconds
-const unsigned long postingInterval = 5L * 1000L; // delay between updates, in milliseconds
+//const char server[] = "thawing-journey-12821.herokuapp.com";
+const char server[] = "httpbin.org";
 
 enum controllerState_t {
   INITIAL,
@@ -38,11 +38,6 @@ enum controllerState_t {
 
 controllerState_t controllerState = INITIAL;
 int myId;
-
-struct httpResponse_t {
-  int statusCode;
-  char response[HTTP_RESPONSE_BUFFER_SIZE];
-};
 
 void setup() {
 
@@ -69,15 +64,7 @@ void loop() {
       break;
   }
 
-  // if there's incoming data from the net connection.
-  // send it out the serial port.  This is for debugging
-  // purposes only:
-//  while (client.available()) {
-//    char c = client.read();
-//    Serial.write(c);
-//  }
-
-  delay(5000);
+  delay(2000);
 
   // if ten seconds have passed since your last connection,
   // then connect again and send data:
@@ -88,12 +75,16 @@ void loop() {
 
 int getMyId() {
 
-  //char response[HTTP_RESPONSE_BUFFER_SIZE];
   httpResponse_t httpResponse;
-  httpRequest(GET, "/anything", &httpResponse);
+  httpRequest(GET, "/ip", &httpResponse);
 
   Serial.println("Received response: ");
   Serial.print(httpResponse.response);
+  Serial.println();
+  Serial.print("Response buffer used: ");
+  Serial.print((float)httpResponse.responseSize / (float)sizeof(httpResponse.response) * 100);
+  Serial.println("%");
+  Serial.println();
 
   return 1;
 }
@@ -124,20 +115,24 @@ void connectToWiFi() {
 }
 
 // this method makes a HTTP connection to the server:
-void httpRequest(char* method, char* path, httpResponse_t* httpResponse) {
-  int index = 0;
-  int responseBufferSize = sizeof(httpResponse->response);
+void httpRequest(const char* method, const char* path, httpResponse_t* httpResponse) {
+  HttpParser* httpParser;
+  bool parseError;
+  bool timeout;
 
-  bool sentRequest = false;
-  bool receivedResponse = false;
-  bool overflow = false;
-  bool done = false;
+  bool sentRequest;
+  bool receivedResponse;
+  bool done;
+
+  unsigned long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
+  const unsigned long requestTimeout = 10L * 1000L; // delay between updates, in milliseconds
 
   while (!done) {
 
     sentRequest = false;
     receivedResponse = false;
-    overflow = false;
+    parseError = false;
+    timeout = false;
 
     while (!sentRequest) {
       // close any connection before send a new request.
@@ -150,8 +145,6 @@ void httpRequest(char* method, char* path, httpResponse_t* httpResponse) {
       Serial.print(" ");
       Serial.print(server);
       Serial.println(path);
-      Serial.print("Buffer size ");
-      Serial.println(responseBufferSize);
       Serial.println();
     
       // if there's a successful connection:
@@ -167,9 +160,7 @@ void httpRequest(char* method, char* path, httpResponse_t* httpResponse) {
         client.println();
   
         sentRequest = true;
-    
-        // note the time that the connection was made:
-        //lastConnectionTime = millis();
+        lastRequestTime = millis();
       }
       else {
         // if you couldn't make a connection:
@@ -179,36 +170,33 @@ void httpRequest(char* method, char* path, httpResponse_t* httpResponse) {
         Serial.print(path);
         Serial.println(" failed.  Couldn't connect.");
         Serial.println();
+        
       }
     }
+
+    httpParser = new HttpParser(httpResponse);
   
-    while (!receivedResponse) {
-      
-      while (client.available()) {
+    while (!receivedResponse && !(millis() - lastRequestTime > requestTimeout)) {
+      while (client.available() && !parseError) {
         receivedResponse = true;
         char c = client.read();
-  
-        if (index < responseBufferSize - 1) {
-          httpResponse->response[index] = c;
-          ++index;
-        }
-        else {
-          overflow = true;
-          Serial.println("Error: HTTP response buffer is full");
-          break;
-        }
+        parseError = httpParser->parse(c);
       }
-      
     }
 
-    if (!overflow) {
+    if (millis() - lastRequestTime > requestTimeout) {
+      timeout = true;
+      Serial.println("Request timeout");
+      Serial.println();
+    }
+
+    if (parseError || timeout) {
+      delay(2000);
+    }
+    else {
       done = true;
-      httpResponse->response[index] = '\0';
       break;
     }
-
-    delay(2000);
-
   }
 
   return;
