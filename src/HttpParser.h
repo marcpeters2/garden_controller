@@ -11,8 +11,18 @@ class HttpParser {
     int responseBufferIndex;
     int responseBufferSize;
     int charsParsed;
-    char lastCharParsed;
   public:
     HttpParser(httpResponse_t*);
     bool parse(char);
+  private:
+    int statusCode;
+    int successiveNewlines;
+    char previousChar;
+    enum responseParserState_t {
+      FINDING_STATUS_CODE,
+      PARSING_STATUS_CODE,
+      FINDING_BODY,
+      PARSING_BODY
+    };
+    responseParserState_t responseParserState;
 };
