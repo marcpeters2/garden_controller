@@ -21,10 +21,34 @@
 #define GET "GET"
 #define POST "POST"
 
+#define ENDPOINT_REGISTER_CONTROLLER "/controllers"
+
+#define MAC_ADDRESS_NUM_BYTES 6
+
+struct httpServer_t {
+  String host;
+  int port;
+};
+
+httpServer_t server = {
+  "192.168.1.191",
+  8000,
+};
+
+struct httpEndpoint_t {
+  String method;
+  String path;
+};
+
+httpEndpoint_t postControllers = {
+  POST,
+  "/controllers",
+};
 
 WiFiClient client;
 
-const char server[] = "thawing-journey-12821.herokuapp.com";
+//const char server[] = "192.168.1.191:8000";
+//const char server[] = "thawing-journey-12821.herokuapp.com";
 //const char server[] = "httpbin.org";
 
 enum controllerState_t {
@@ -34,6 +58,22 @@ enum controllerState_t {
 
 controllerState_t controllerState = INITIAL;
 int myId;
+
+enum outletType_t {
+  ELECTRIC,
+  HYDRAULIC
+};
+
+struct outlet_t {
+  String internalName;
+};
+
+const outlet_t outlets[] = {
+  { "A" },
+  { "B" },
+  { "C" },
+  { "D" },
+};
 
 void setup() {
 
@@ -48,6 +88,8 @@ void setup() {
 
 void loop() {
 
+  int requestDelay;
+  
   switch(controllerState) {
     case INITIAL:
       myId = getMyId();
@@ -57,21 +99,38 @@ void loop() {
       break;
   }
 
-  Serial.println("Delay: ");
-  Serial.println(rand() % 1000 + 1000);
-  delay(rand() % 2000 + 2000);
+  requestDelay = rand() % 3000 + 1000;
+  Serial.print("Delay: ");
+  Serial.println(requestDelay);
+  delay(requestDelay);
 }
 
 int getMyId() {
 
+  byte mac[6];
+  char macStringBuffer [MAC_ADDRESS_NUM_BYTES * 2 + 1];
+  macStringBuffer[MAC_ADDRESS_NUM_BYTES * 2] = 0;
+  WiFi.macAddress(mac);
+
+  String payload = "{";
+  payload += "\"MAC\":\"";
+  for(byte i = 0; i < MAC_ADDRESS_NUM_BYTES; i++) {
+    sprintf(&macStringBuffer[2*i], "%02X", mac[i]);
+  }
+  payload += macStringBuffer;
+  payload += "\",";
+  payload += "\"electric\":{}";
+  payload += "}";
+  
   httpResponse_t httpResponse;
-  httpRequest(GET, "/", &httpResponse);
+  httpRequest(&server, &postControllers, payload, &httpResponse);
 
   return 1;
 }
 
 // this method makes a HTTP connection to the server:
-void httpRequest(const char* method, const char* path, httpResponse_t* httpResponse) {
+void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse) {
+  bool payloadExists = payload.length() > 0;
   HttpParser* httpParser;
   bool parseError;
   bool timeout;
@@ -81,7 +140,7 @@ void httpRequest(const char* method, const char* path, httpResponse_t* httpRespo
   bool done;
 
   unsigned long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
-  const unsigned long requestTimeout = 10L * 1000L; // delay between updates, in milliseconds
+  const unsigned long requestTimeout = 4L * 1000L; // delay between updates, in milliseconds
 
   while (!done) {
 
@@ -99,23 +158,39 @@ void httpRequest(const char* method, const char* path, httpResponse_t* httpRespo
       Serial.print("-----------------------");
       Serial.println();
       Serial.print("Making HTTP request ");
-      Serial.print(method);
+      Serial.print(endpoint->method);
       Serial.print(" ");
-      Serial.print(server);
-      Serial.println(path);
+      Serial.print(server->host);
+      Serial.print(":");
+      Serial.print(server->port);
+      Serial.println(endpoint->path);
       Serial.println();
+      if (payloadExists) {
+        Serial.println(payload);
+        Serial.println();
+      }
     
       // if there's a successful connection:
-      if (client.connect(server, 80)) {
-        client.print(method);
+      if (client.connect(server->host.c_str(), server->port)) {
+        client.print(endpoint->method);
         client.print(" ");
-        client.print(path);
+        client.print(endpoint->path);
         client.println(" HTTP/1.1");
         client.print("Host: ");
-        client.println(server);
+        client.print(server->host);
+        client.print(":");
+        client.println(server->port);
+        client.println("Content-Type: application/json");
+        if (payloadExists) {
+          client.print("Content-Length: ");
+          client.println(payload.length());
+        }
         client.println("User-Agent: ArduinoWiFi/1.1");
         client.println("Connection: close");
         client.println();
+        if (payloadExists) {
+          client.println(payload.c_str());
+        }
   
         sentRequest = true;
         lastRequestTime = millis();
@@ -123,9 +198,9 @@ void httpRequest(const char* method, const char* path, httpResponse_t* httpRespo
       else {
         // if you couldn't make a connection:
         Serial.print("HTTP request ");
-        Serial.print(method);
+        Serial.print(endpoint->method);
         Serial.print(" ");
-        Serial.print(path);
+        Serial.print(endpoint->path);
         Serial.println(" failed.  Couldn't connect.");
         Serial.print("-----------------------");
         Serial.println();
