@@ -83,6 +83,8 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
+  delay(3000);
+
   WifiService::connectToWiFi("Pudding", "vanilla864");
 }
 
@@ -114,8 +116,8 @@ int getMyId() {
 
   String payload = "{";
   payload += "\"MAC\":\"";
-  for(byte i = 0; i < MAC_ADDRESS_NUM_BYTES; i++) {
-    sprintf(&macStringBuffer[2*i], "%02X", mac[i]);
+  for(short i = 0; i < MAC_ADDRESS_NUM_BYTES; i++) {
+    sprintf(&macStringBuffer[2*i], "%02X", mac[MAC_ADDRESS_NUM_BYTES - 1 - i]);
   }
   payload += macStringBuffer;
   payload += "\",";
