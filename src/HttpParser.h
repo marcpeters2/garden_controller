@@ -14,6 +14,7 @@ class HttpParser {
   public:
     HttpParser(httpResponse_t*);
     bool parse(char);
+    void reset();
   private:
     int statusCode;
     int successiveNewlines;

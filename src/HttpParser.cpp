@@ -4,6 +4,10 @@
 HttpParser::HttpParser(httpResponse_t* _httpResponse) {
   httpResponse = _httpResponse;
   responseBufferSize = sizeof(httpResponse->response);
+  HttpParser::reset();
+}
+
+void HttpParser::reset() {
   responseBufferIndex = 0;
   charsParsed = 0;
   httpResponse->response[responseBufferIndex] = '\0';

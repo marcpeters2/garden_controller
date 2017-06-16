@@ -31,7 +31,7 @@ struct httpServer_t {
 };
 
 httpServer_t server = {
-  "192.168.1.191",
+  "192.168.1.192",
   8000,
 };
 
@@ -46,10 +46,6 @@ httpEndpoint_t postControllers = {
 };
 
 WiFiClient client;
-
-//const char server[] = "192.168.1.191:8000";
-//const char server[] = "thawing-journey-12821.herokuapp.com";
-//const char server[] = "httpbin.org";
 
 enum controllerState_t {
   INITIAL,
@@ -75,6 +71,13 @@ const outlet_t outlets[] = {
   { "D" },
 };
 
+extern "C" char *sbrk(int i);
+size_t freeRAM(void)
+{
+  char stack_dummy = 0;
+  return(&stack_dummy - sbrk(0));
+}
+
 void setup() {
 
   //Initialize serial and wait for port to open:
@@ -97,32 +100,41 @@ void loop() {
       myId = getMyId();
       break;
     case RECEIVED_ID:
-
       break;
   }
 
-  requestDelay = rand() % 3000 + 1000;
-  Serial.print("Delay: ");
-  Serial.println(requestDelay);
-  delay(requestDelay);
+//  requestDelay = rand() % 3000 + 1000;
+//  Serial.print("Delay: ");
+//  Serial.println(requestDelay);
+//  delay(requestDelay);
 }
 
 int getMyId() {
 
   byte mac[6];
-  char macStringBuffer [MAC_ADDRESS_NUM_BYTES * 2 + 1];
+  char macStringBuffer [MAC_ADDRESS_NUM_BYTES * 2 + 1];  
   macStringBuffer[MAC_ADDRESS_NUM_BYTES * 2] = 0;
   WiFi.macAddress(mac);
 
   String payload = "{";
   payload += "\"MAC\":\"";
-  for(short i = 0; i < MAC_ADDRESS_NUM_BYTES; i++) {
+  for (short i = 0; i < MAC_ADDRESS_NUM_BYTES; i++) {
     sprintf(&macStringBuffer[2*i], "%02X", mac[MAC_ADDRESS_NUM_BYTES - 1 - i]);
   }
   payload += macStringBuffer;
   payload += "\",";
-  payload += "\"electric\":{}";
-  payload += "}";
+  payload += "\"electric\":{";
+  for (short i = 0; i < sizeof(outlets)/sizeof(*outlets); i++) {
+    if (i > 0) {
+      payload += ",";
+    }
+    payload += "\"";
+    payload += i;
+    payload += "\":\"";
+    payload += outlets[i].internalName;
+    payload += "\"";
+  }
+  payload += "}}";
   
   httpResponse_t httpResponse;
   httpRequest(&server, &postControllers, payload, &httpResponse);
@@ -133,7 +145,7 @@ int getMyId() {
 // this method makes a HTTP connection to the server:
 void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse) {
   bool payloadExists = payload.length() > 0;
-  HttpParser* httpParser;
+  HttpParser* httpParser = new HttpParser(httpResponse);;
   bool parseError;
   bool timeout;
 
@@ -210,7 +222,7 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
       }
     }
 
-    httpParser = new HttpParser(httpResponse);
+    httpParser->reset();
   
     while (!(millis() - lastRequestTime > requestTimeout)) {
       while (client.available() && !parseError) {
@@ -227,6 +239,9 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
     if (millis() - lastRequestTime > requestTimeout) {
       timeout = true;
       Serial.println("Request timeout");
+      Serial.print("Free memory: ");
+      Serial.print(freeRAM());
+      Serial.println("B");
       Serial.print("-----------------------");
       Serial.println();
     }
@@ -248,8 +263,13 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
   Serial.print("Response buffer used: ");
   Serial.print((float)httpResponse->responseSize / (float)sizeof(httpResponse->response) * 100);
   Serial.println("%");
+  Serial.print("Free memory: ");
+  Serial.print(freeRAM());
+  Serial.println("B");
   Serial.print("-----------------------");
   Serial.println();
+
+  delete httpParser;
 
   return;
 }
