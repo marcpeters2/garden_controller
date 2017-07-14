@@ -1,6 +1,4 @@
 #include "WifiService.h"
-#include <SPI.h>
-#include <WiFi101.h>
 
 void WifiService::connectToWiFi(const char* ssid, const char* password) {
   int status = WL_IDLE_STATUS;     // the WiFi radio's status
@@ -19,7 +17,7 @@ void WifiService::connectToWiFi(const char* ssid, const char* password) {
     // Connect to WPA/WPA2 network:
     status = WiFi.begin(ssid, password);
 
-    // wait 10 seconds for connection:
+    // wait 1 second for connection:
     delay(1000);
   }
 
