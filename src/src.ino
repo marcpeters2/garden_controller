@@ -31,7 +31,7 @@ struct httpServer_t {
 };
 
 httpServer_t server = {
-  "192.168.1.192",
+  "192.168.1.193",
   8000,
 };
 
@@ -45,15 +45,23 @@ httpEndpoint_t postControllers = {
   "/controllers",
 };
 
+httpEndpoint_t getServerTime = {
+  GET,
+  "/time",
+};
+
 WiFiClient client;
 
 enum controllerState_t {
   INITIAL,
-  RECEIVED_ID
+  RECEIVED_ID,
+  SYNCED_TIME,
+  RECEIVED_COMMANDS
 };
 
 controllerState_t controllerState = INITIAL;
 int myId;
+long long timeOffset;
 
 enum outletType_t {
   ELECTRIC,
@@ -89,6 +97,7 @@ void setup() {
   delay(3000);
 
   WifiService::connectToWiFi("Pudding", "vanilla864");
+  //WifiService::connectToWiFi("OnePlus", "qwertyui");
 }
 
 void loop() {
@@ -100,17 +109,19 @@ void loop() {
       myId = getMyId();
       break;
     case RECEIVED_ID:
+      timeOffset = getCurrentTime();
       break;
   }
 
-//  requestDelay = rand() % 3000 + 1000;
-//  Serial.print("Delay: ");
-//  Serial.println(requestDelay);
-//  delay(requestDelay);
+  requestDelay = rand() % 3000 + 1000;
+  Serial.print("Delay: ");
+  Serial.println(requestDelay);
+  delay(requestDelay);
 }
 
 int getMyId() {
 
+  int id;
   byte mac[6];
   char macStringBuffer [MAC_ADDRESS_NUM_BYTES * 2 + 1];  
   macStringBuffer[MAC_ADDRESS_NUM_BYTES * 2] = 0;
@@ -137,9 +148,36 @@ int getMyId() {
   payload += "}}";
   
   httpResponse_t httpResponse;
-  httpRequest(&server, &postControllers, payload, &httpResponse);
 
-  return 1;
+  //while(httpResponse.statusCode != 200) {
+    httpRequest(&server, &postControllers, payload, &httpResponse);
+  //}
+
+  id = parseIntFromString(httpResponse.response);
+  Serial.print("Received controller id: ");
+  Serial.println(id);
+
+  controllerState = RECEIVED_ID;
+
+  return id;
+}
+
+long long getCurrentTime() {
+
+  long long currentTimestamp;
+  String payload = "";
+
+  httpResponse_t httpResponse;
+
+  //while(httpResponse.statusCode != 200) {
+    httpRequest(&server, &getServerTime, payload, &httpResponse);
+  //}
+
+  currentTimestamp = parseLongLongFromString(httpResponse.response);
+  Serial.print("Received current timestamp: ");
+  Serial.println(httpResponse.response);
+
+  return currentTimestamp;
 }
 
 // this method makes a HTTP connection to the server:
@@ -195,6 +233,7 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
         client.print(":");
         client.println(server->port);
         client.println("Content-Type: application/json");
+        client.println("Accept: text/csv");
         if (payloadExists) {
           client.print("Content-Length: ");
           client.println(payload.length());
@@ -272,5 +311,49 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
   delete httpParser;
 
   return;
+}
+
+
+int parseIntFromString(char* buf) {
+  int index = 0;
+  int charAsInt;
+  int bufferSize = sizeof(buf) / sizeof(char);
+  int result = 0;
+
+  while (index < bufferSize) {
+    charAsInt = charToInt(buf[index]);
+
+    if (charAsInt < 0 || charAsInt > 9) {
+      break;
+    }
+
+    result = result * 10 + charAsInt;
+    index++;
+  }
+  return result;
+}
+
+long long parseLongLongFromString(char* buf) {
+  int index = 0;
+  int charAsInt;
+  int bufferSize = sizeof(buf) / sizeof(char);
+  long long result = 0;
+
+  while (index < bufferSize) {
+    charAsInt = charToInt(buf[index]);
+
+    if (charAsInt < 0 || charAsInt > 9) {
+      break;
+    }
+
+    result = result * 10 + charAsInt;
+    index++;
+  }
+  return result;
+}
+
+
+int charToInt(char c) {
+  return c - '0';
 }
 
