@@ -1,10 +1,3 @@
-#ifndef HTTPPARSER_H
-#define HTTPPARSER_H
-
-#include "Arduino.h"
-//#include "MyHttpClient.h"
-//#include <Wire.h>
-
 #define HTTP_RESPONSE_BUFFER_SIZE 1024
 
 struct httpResponse_t {
@@ -34,5 +27,3 @@ class HttpParser {
     };
     responseParserState_t responseParserState;
 };
-
-#endif

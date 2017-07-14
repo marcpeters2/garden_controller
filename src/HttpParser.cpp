@@ -1,4 +1,5 @@
 #include "HttpParser.h"
+#include <SPI.h>
 
 HttpParser::HttpParser(httpResponse_t* _httpResponse) {
   httpResponse = _httpResponse;

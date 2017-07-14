@@ -1,9 +1,4 @@
-#ifndef WIFISERVICE_H
-#define WIFISERVICE_H
 
-#include "Arduino.h"
-//#include <Wire.h>
-#include <WiFi101.h>
 
 class WifiService {
   public:
@@ -13,4 +8,3 @@ class WifiService {
     static void printCurrentNet();
 };
 
-#endif
