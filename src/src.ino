@@ -45,7 +45,7 @@ httpEndpoint_t postControllers = {
   "/controllers",
 };
 
-httpEndpoint_t getServerTime = {
+httpEndpoint_t getTimeRequest = {
   GET,
   "/time",
 };
@@ -61,7 +61,7 @@ enum controllerState_t {
 
 controllerState_t controllerState = INITIAL;
 int myId;
-long long timeOffset;
+unsigned long long timeOffset;
 
 enum outletType_t {
   ELECTRIC,
@@ -109,7 +109,10 @@ void loop() {
       myId = getMyId();
       break;
     case RECEIVED_ID:
-      timeOffset = getCurrentTime();
+      timeOffset = getServerTime();
+      break;
+    case SYNCED_TIME:
+      getCommands();
       break;
   }
 
@@ -149,9 +152,9 @@ int getMyId() {
   
   httpResponse_t httpResponse;
 
-  //while(httpResponse.statusCode != 200) {
+  do {
     httpRequest(&server, &postControllers, payload, &httpResponse);
-  //}
+  } while(httpResponse.statusCode != 200);
 
   id = parseIntFromString(httpResponse.response);
   Serial.print("Received controller id: ");
@@ -162,22 +165,54 @@ int getMyId() {
   return id;
 }
 
-long long getCurrentTime() {
+unsigned long long getServerTime() {
 
-  long long currentTimestamp;
+  unsigned long requestStart = millis();
+  unsigned long long serverTimestamp;
   String payload = "";
 
   httpResponse_t httpResponse;
 
-  //while(httpResponse.statusCode != 200) {
-    httpRequest(&server, &getServerTime, payload, &httpResponse);
-  //}
+  do {
+    httpRequest(&server, &getTimeRequest, payload, &httpResponse);
+  } while(httpResponse.statusCode != 200);
 
-  currentTimestamp = parseLongLongFromString(httpResponse.response);
+  unsigned long requestStop = millis();
+  unsigned long estimatedLag = (requestStop - requestStart) / 2;
+
+  serverTimestamp = parseULongLongFromString(httpResponse.response) + estimatedLag;
   Serial.print("Received current timestamp: ");
   Serial.println(httpResponse.response);
+  Serial.print("Estimated lag: ");
+  Serial.println(estimatedLag);
+//  Serial.print("Adjusted timestamp: ");
+//  Serial.println((String)"" + serverTimestamp);
 
-  return currentTimestamp;
+  controllerState = SYNCED_TIME;
+  
+  return serverTimestamp;
+}
+
+void getCommands() {
+
+  String payload = "";
+  String path = (String) "/controllers/" + myId + "/commands";
+
+  httpEndpoint_t getCommandRequest = {
+    GET,
+    path,
+  };
+
+  httpResponse_t httpResponse;
+
+  do {
+    httpRequest(&server, &getCommandRequest, payload, &httpResponse);
+  } while(httpResponse.statusCode != 200);
+
+  Serial.print("Received commands: ");
+  Serial.println(httpResponse.response);
+
+  return;
 }
 
 // this method makes a HTTP connection to the server:
@@ -333,11 +368,11 @@ int parseIntFromString(char* buf) {
   return result;
 }
 
-long long parseLongLongFromString(char* buf) {
+unsigned long long parseULongLongFromString(char* buf) {
   int index = 0;
   int charAsInt;
   int bufferSize = sizeof(buf) / sizeof(char);
-  long long result = 0;
+  unsigned long long result = 0;
 
   while (index < bufferSize) {
     charAsInt = charToInt(buf[index]);
