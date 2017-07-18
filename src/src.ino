@@ -17,13 +17,14 @@
 #include <WiFi101.h>
 #include "HttpParser.h"
 #include "WifiService.h"
+#include "Util.h"
 
 #define GET "GET"
 #define POST "POST"
 
-#define ENDPOINT_REGISTER_CONTROLLER "/controllers"
-
 #define MAC_ADDRESS_NUM_BYTES 6
+
+#define MAX_COMMANDS_PER_OUTLET 5
 
 struct httpServer_t {
   String host;
@@ -31,7 +32,7 @@ struct httpServer_t {
 };
 
 httpServer_t server = {
-  "192.168.1.193",
+  "192.168.43.124",
   8000,
 };
 
@@ -68,15 +69,27 @@ enum outletType_t {
   HYDRAULIC
 };
 
+enum outletState_t {
+  OFF = 0,
+  ON = 1
+};
+
+struct command_t {
+  outletState_t outletState;
+  unsigned long long executeAt;
+};
+
 struct outlet_t {
   String internalName;
+  int pin;
+  command_t commands[MAX_COMMANDS_PER_OUTLET];
 };
 
 const outlet_t outlets[] = {
-  { "A" },
-  { "B" },
-  { "C" },
-  { "D" },
+  { "A", 1 },
+  { "B", 2 },
+  { "C", 3 },
+  { "D", 4 },
 };
 
 extern "C" char *sbrk(int i);
@@ -94,10 +107,12 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
+  Util::printWelcomeMessage();
+
   delay(3000);
 
-  WifiService::connectToWiFi("Pudding", "vanilla864");
-  //WifiService::connectToWiFi("OnePlus", "qwertyui");
+  //WifiService::connectToWiFi("Pudding", "vanilla864");
+  WifiService::connectToWiFi("OnePlus", "qwertyui");
 }
 
 void loop() {
@@ -156,7 +171,7 @@ int getMyId() {
     httpRequest(&server, &postControllers, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
-  id = parseIntFromString(httpResponse.response);
+  id = Util::parseIntFromString(httpResponse.response);
   Serial.print("Received controller id: ");
   Serial.println(id);
 
@@ -178,15 +193,15 @@ unsigned long long getServerTime() {
   } while(httpResponse.statusCode != 200);
 
   unsigned long requestStop = millis();
-  unsigned long estimatedLag = (requestStop - requestStart) / 2;
+  unsigned long long estimatedLag = (requestStop - requestStart) / 2;
 
-  serverTimestamp = parseULongLongFromString(httpResponse.response) + estimatedLag;
+  serverTimestamp = (unsigned long long) Util::parseULongLongFromString(httpResponse.response) + estimatedLag;
   Serial.print("Received current timestamp: ");
   Serial.println(httpResponse.response);
   Serial.print("Estimated lag: ");
-  Serial.println(estimatedLag);
-//  Serial.print("Adjusted timestamp: ");
-//  Serial.println((String)"" + serverTimestamp);
+  Serial.println(Util::toString(estimatedLag));
+  Serial.print("Adjusted timestamp: ");
+  Serial.println(Util::toString(serverTimestamp));
 
   controllerState = SYNCED_TIME;
   
@@ -349,46 +364,5 @@ void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload,
 }
 
 
-int parseIntFromString(char* buf) {
-  int index = 0;
-  int charAsInt;
-  int bufferSize = sizeof(buf) / sizeof(char);
-  int result = 0;
 
-  while (index < bufferSize) {
-    charAsInt = charToInt(buf[index]);
-
-    if (charAsInt < 0 || charAsInt > 9) {
-      break;
-    }
-
-    result = result * 10 + charAsInt;
-    index++;
-  }
-  return result;
-}
-
-unsigned long long parseULongLongFromString(char* buf) {
-  int index = 0;
-  int charAsInt;
-  int bufferSize = sizeof(buf) / sizeof(char);
-  unsigned long long result = 0;
-
-  while (index < bufferSize) {
-    charAsInt = charToInt(buf[index]);
-
-    if (charAsInt < 0 || charAsInt > 9) {
-      break;
-    }
-
-    result = result * 10 + charAsInt;
-    index++;
-  }
-  return result;
-}
-
-
-int charToInt(char c) {
-  return c - '0';
-}
 

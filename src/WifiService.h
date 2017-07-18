@@ -1,4 +1,5 @@
-
+#ifndef WIFISERVICE_H
+#define WIFISERVICE_H
 
 class WifiService {
   public:
@@ -8,3 +9,4 @@ class WifiService {
     static void printCurrentNet();
 };
 
+#endif

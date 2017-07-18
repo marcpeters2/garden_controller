@@ -1,3 +1,6 @@
+#ifndef HTTPPARSER_H
+#define HTTPPARSER_H
+
 #define HTTP_RESPONSE_BUFFER_SIZE 1024
 
 struct httpResponse_t {
@@ -27,3 +30,5 @@ class HttpParser {
     };
     responseParserState_t responseParserState;
 };
+
+#endif
