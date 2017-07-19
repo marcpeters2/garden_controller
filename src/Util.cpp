@@ -2,6 +2,14 @@
 #include "Arduino.h"
 #include "Util.h"
 
+extern "C" char *sbrk(int i);
+size_t Util::freeRAM(void)
+{
+  char stack_dummy = 0;
+  return(&stack_dummy - sbrk(0));
+}
+
+
 String Util::toString(unsigned long long x)
 {
     boolean flag = false; // For preventing string return like this 0000123, with a lot of zeros in front.
@@ -77,6 +85,11 @@ unsigned long long Util::parseULongLongFromString(char* buf) {
 
 int Util::charToInt(char c) {
   return c - '0';
+}
+
+bool Util::charIsNumeric(char c) {
+  int charAsInt = Util::charToInt(c);
+  return (charAsInt >= 0) && (charAsInt <= 9);
 }
 
 void Util::printWelcomeMessage() {

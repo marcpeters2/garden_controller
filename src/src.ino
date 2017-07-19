@@ -1,21 +1,6 @@
-/*
-
- This example connects to an unencrypted WiFi network.
- Then it prints the  MAC address of the WiFi shield,
- the IP address obtained, and other network details.
-
- Circuit:
- * WiFi shield attached
-
- created 13 July 2010
- by dlf (Metodo2 srl)
- modified 31 May 2012
- by Tom Igoe
- */
 #include <string.h>
 #include <SPI.h>
-#include <WiFi101.h>
-#include "HttpParser.h"
+#include "GCHttpClient.h"
 #include "WifiService.h"
 #include "Util.h"
 
@@ -26,19 +11,10 @@
 
 #define MAX_COMMANDS_PER_OUTLET 5
 
-struct httpServer_t {
-  String host;
-  int port;
-};
 
 httpServer_t server = {
   "192.168.43.124",
   8000,
-};
-
-struct httpEndpoint_t {
-  String method;
-  String path;
 };
 
 httpEndpoint_t postControllers = {
@@ -50,8 +26,6 @@ httpEndpoint_t getTimeRequest = {
   GET,
   "/time",
 };
-
-WiFiClient client;
 
 enum controllerState_t {
   INITIAL,
@@ -92,12 +66,13 @@ const outlet_t outlets[] = {
   { "D", 4 },
 };
 
-extern "C" char *sbrk(int i);
-size_t freeRAM(void)
-{
-  char stack_dummy = 0;
-  return(&stack_dummy - sbrk(0));
-}
+const int numOutlets = sizeof(outlets) / sizeof(outlet_t);
+
+enum commandStringParserState_t {
+  PARSING_OUTLET_INTERNAL_ID,
+  PARSING_TIMESTAMP,
+  PARSING_OUTLET_STATE
+};
 
 void setup() {
 
@@ -108,6 +83,9 @@ void setup() {
   }
 
   Util::printWelcomeMessage();
+  Serial.print("Number of outlets: ");
+  Serial.println(numOutlets);
+  Serial.println();
 
   delay(3000);
 
@@ -131,7 +109,8 @@ void loop() {
       break;
   }
 
-  requestDelay = rand() % 3000 + 1000;
+  //requestDelay = rand() % 3000 + 1000;
+  requestDelay = 2000;
   Serial.print("Delay: ");
   Serial.println(requestDelay);
   delay(requestDelay);
@@ -168,7 +147,7 @@ int getMyId() {
   httpResponse_t httpResponse;
 
   do {
-    httpRequest(&server, &postControllers, payload, &httpResponse);
+    GCHttpClient::httpRequest(&server, &postControllers, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
   id = Util::parseIntFromString(httpResponse.response);
@@ -189,7 +168,7 @@ unsigned long long getServerTime() {
   httpResponse_t httpResponse;
 
   do {
-    httpRequest(&server, &getTimeRequest, payload, &httpResponse);
+    GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
   unsigned long requestStop = millis();
@@ -221,146 +200,146 @@ void getCommands() {
   httpResponse_t httpResponse;
 
   do {
-    httpRequest(&server, &getCommandRequest, payload, &httpResponse);
+    GCHttpClient::httpRequest(&server, &getCommandRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
   Serial.print("Received commands: ");
   Serial.println(httpResponse.response);
 
+  parseCommandString(httpResponse.response);
+
   return;
 }
 
-// this method makes a HTTP connection to the server:
-void httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse) {
-  bool payloadExists = payload.length() > 0;
-  HttpParser* httpParser = new HttpParser(httpResponse);;
-  bool parseError;
-  bool timeout;
 
-  bool sentRequest;
-  bool receivedResponse;
-  bool done;
+void parseCommandString(char* commandString) {
+  const int maxBufferSize = 25;
+  String stringBuf = "";
+  char charArrayBuf[maxBufferSize + 1];
+  char c;
 
-  unsigned long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
-  const unsigned long requestTimeout = 4L * 1000L; // delay between updates, in milliseconds
+  int outletPin;
+  unsigned long long timestamp;
+  int outletStateInt;
+  outletState_t outletState;
+  
+  int index = 0;
+  int commandNum = 0;
+  commandStringParserState_t state = PARSING_OUTLET_INTERNAL_ID;
+  bool error = false;
 
-  while (!done) {
-
-    sentRequest = false;
-    receivedResponse = false;
-    parseError = false;
-    timeout = false;
-
-    while (!sentRequest) {
-      // close any connection before send a new request.
-      // This will free the socket on the WiFi shield
-      client.stop();
-
-      Serial.println();
-      Serial.print("-----------------------");
-      Serial.println();
-      Serial.print("Making HTTP request ");
-      Serial.print(endpoint->method);
-      Serial.print(" ");
-      Serial.print(server->host);
-      Serial.print(":");
-      Serial.print(server->port);
-      Serial.println(endpoint->path);
-      Serial.println();
-      if (payloadExists) {
-        Serial.println(payload);
-        Serial.println();
-      }
+  while(index <= strlen(commandString) && !error) {
+    c = commandString[index];
     
-      // if there's a successful connection:
-      if (client.connect(server->host.c_str(), server->port)) {
-        client.print(endpoint->method);
-        client.print(" ");
-        client.print(endpoint->path);
-        client.println(" HTTP/1.1");
-        client.print("Host: ");
-        client.print(server->host);
-        client.print(":");
-        client.println(server->port);
-        client.println("Content-Type: application/json");
-        client.println("Accept: text/csv");
-        if (payloadExists) {
-          client.print("Content-Length: ");
-          client.println(payload.length());
-        }
-        client.println("User-Agent: ArduinoWiFi/1.1");
-        client.println("Connection: close");
-        client.println();
-        if (payloadExists) {
-          client.println(payload.c_str());
-        }
-  
-        sentRequest = true;
-        lastRequestTime = millis();
-      }
-      else {
-        // if you couldn't make a connection:
-        Serial.print("HTTP request ");
-        Serial.print(endpoint->method);
-        Serial.print(" ");
-        Serial.print(endpoint->path);
-        Serial.println(" failed.  Couldn't connect.");
-        Serial.print("-----------------------");
-        Serial.println();
-        delay(2000);
-      }
-    }
-
-    httpParser->reset();
-  
-    while (!(millis() - lastRequestTime > requestTimeout)) {
-      while (client.available() && !parseError) {
-        receivedResponse = true;
-        char c = client.read();
-        parseError = httpParser->parse(c);
-      }
-
-      if ((receivedResponse && !client.connected()) || parseError) {
+    switch(state) {
+      case PARSING_OUTLET_INTERNAL_ID:
+          if(Util::charIsNumeric(c)) {
+            stringBuf = stringBuf + c;
+          }
+          else if(c == ',') {
+            stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
+            outletPin = Util::parseIntFromString(charArrayBuf);
+            stringBuf = "";
+            state = PARSING_TIMESTAMP;
+          } 
+          else {
+            Serial.print("Encountered unexpected character in command string while parsing OUTLET_INTERNAL_ID: ");
+            Serial.println(c);
+            error = true;
+          }
         break;
-      }
+        
+      case PARSING_TIMESTAMP:
+        if(Util::charIsNumeric(c)) {
+            stringBuf = stringBuf + c;
+          }
+          else if(c == ',') {
+            stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
+            timestamp = Util::parseULongLongFromString(charArrayBuf);
+            stringBuf = "";
+            state = PARSING_OUTLET_STATE;
+          } 
+          else {
+            Serial.print("Encountered unexpected character in command string while parsing TIMESTAMP: ");
+            Serial.println(c);
+            error = true;
+          }
+        break;
+        
+      case PARSING_OUTLET_STATE:
+          if(Util::charIsNumeric(c)) {
+            stringBuf = stringBuf + c;
+          }
+          else if(c == ',') {
+            stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
+            outletStateInt = Util::parseIntFromString(charArrayBuf);
+            if(outletStateInt == OFF) {
+              outletState = OFF;
+            }
+            else if(outletStateInt == ON) {
+              outletState = ON;
+            }
+            else {
+              Serial.print("Encountered invalid outlet state in command string: ");
+              Serial.println(outletStateInt);
+              error = true;
+            }
+            stringBuf = "";
+            state = PARSING_TIMESTAMP;
+            // TODO: Add command to internal data structure here
+            Serial.print("Parsed command for outletInternalId: ");
+            Serial.print(outletPin);
+            Serial.print(", timestamp: ");
+            Serial.print(Util::toString(timestamp));
+            Serial.print(", state: ");
+            Serial.println(outletStateInt);
+            commandNum++;
+          } 
+          else if(c == '\n' || c == '\0') {
+            stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
+            outletStateInt = Util::parseIntFromString(charArrayBuf);
+            if(outletStateInt == OFF) {
+              outletState = OFF;
+            }
+            else if(outletStateInt == ON) {
+              outletState = ON;
+            }
+            else {
+              Serial.print("Encountered invalid outlet state in command string: ");
+              Serial.println(outletStateInt);
+              error = true;
+            }
+            stringBuf = "";
+            state = PARSING_OUTLET_INTERNAL_ID;
+            // TODO: Add command to internal data structure here
+            Serial.print("Parsed command for outletInternalId: ");
+            Serial.print(outletPin);
+            Serial.print(", timestamp: ");
+            Serial.print(Util::toString(timestamp));
+            Serial.print(", state: ");
+            Serial.println(outletStateInt);
+            commandNum = 0;
+          } 
+          else {
+            Serial.print("Encountered unexpected character in command string while parsing OUTLET_STATE: ");
+            Serial.println(c);
+            error = true;
+          }
+        break;
     }
 
-    if (millis() - lastRequestTime > requestTimeout) {
-      timeout = true;
-      Serial.println("Request timeout");
-      Serial.print("Free memory: ");
-      Serial.print(freeRAM());
-      Serial.println("B");
-      Serial.print("-----------------------");
-      Serial.println();
+    if(stringBuf.length() > maxBufferSize) {
+      Serial.println("Error parsing command string.  Temp buffer is full.");
+      error = true;
     }
 
-    if (parseError || timeout) {
-      delay(2000);
-    }
-    else {
-      done = true;
+    if(error) {
       break;
     }
+
+    index++;
   }
-
-  Serial.println("Response: ");
-  Serial.print("Status ");
-  Serial.println(httpResponse->statusCode);
-  Serial.print(httpResponse->response);
-  Serial.println();
-  Serial.print("Response buffer used: ");
-  Serial.print((float)httpResponse->responseSize / (float)sizeof(httpResponse->response) * 100);
-  Serial.println("%");
-  Serial.print("Free memory: ");
-  Serial.print(freeRAM());
-  Serial.println("B");
-  Serial.print("-----------------------");
-  Serial.println();
-
-  delete httpParser;
-
-  return;
+  
 }
 
 
