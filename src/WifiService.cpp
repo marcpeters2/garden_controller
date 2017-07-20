@@ -14,7 +14,7 @@ void WifiService::connectToWiFi(const char* ssid, const char* password) {
 
   // attempt to connect to WiFi network:
   while ( status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to WPA SSID: ");
+    Serial.print(">>> Attempt connection to WPA SSID: ");
     Serial.println(ssid);
     // Connect to WPA/WPA2 network:
     status = WiFi.begin(ssid, password);
@@ -24,7 +24,7 @@ void WifiService::connectToWiFi(const char* ssid, const char* password) {
   }
 
   // you're connected now, so print out the data:
-  Serial.print("You're connected to the network");
+  Serial.println("Connected!");
   printCurrentNet();
   printWiFiData();
 }

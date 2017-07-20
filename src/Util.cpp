@@ -12,30 +12,27 @@ size_t Util::freeRAM(void)
 
 String Util::toString(unsigned long long x)
 {
-    boolean flag = false; // For preventing string return like this 0000123, with a lot of zeros in front.
-     String str = "";      // Start with an empty string.
-     unsigned long long y = 10000000000000000000LLU;
-     int res;
-     if (x == 0)  // if x = 0 and this is not testet, then function return a empty string.
-     {
-           str = "0";
-           return str;  // or return "0";
-     }    
-     while (y > 0)
-     {                
-            //Serial.print("parse");
-            res = (int)(x / y);
-            //Serial.print(res);
-            if (res > 0)  // Wait for res > 0, then start adding to string.
-                flag = true;
-            if (flag == true)
-                str = str + String(res);
-            x = x - (y * (unsigned long long)res);  // Subtract res times * y from x
-            y = y / 10;                   // Reducer y with 10    
-     }
-//     Serial.println();
-//     Serial.println("-----------------------");
-     return str;
+  boolean flag = false; // For preventing string return like this 0000123, with a lot of zeros in front.
+  String str = "";      // Start with an empty string.
+  unsigned long long y = 10000000000000000000LLU;
+  int res;
+  if (x == 0)  // if x = 0 and this is not testet, then function return a empty string.
+  {
+    str = "0";
+    return str;  // or return "0";
+  }    
+  while (y > 0)
+  {                
+    res = (int)(x / y);
+    if (res > 0)  // Wait for res > 0, then start adding to string.
+        flag = true;
+    if (flag == true)
+        str = str + String(res);
+    x = x - (y * (unsigned long long)res);  // Subtract res times * y from x
+    y = y / 10;                   // Reducer y with 10    
+  }
+  
+  return str;
 }
 
 int Util::parseIntFromString(char* buf) {
@@ -90,6 +87,32 @@ int Util::charToInt(char c) {
 bool Util::charIsNumeric(char c) {
   int charAsInt = Util::charToInt(c);
   return (charAsInt >= 0) && (charAsInt <= 9);
+}
+
+unsigned long lastMillis = millis();
+int overflows = 0;
+
+// TODO: millis() overflows roughly every 50 days.  If this function isn't called for 50 days, it won't detect the overflow properly.
+unsigned long long Util::now(unsigned long long timeOffset) {
+  unsigned long millisNow = millis();
+  unsigned long long result;
+  
+  if(millisNow < lastMillis) {
+    overflows++;
+    Serial.println("**************************************");
+    Serial.print("millis() has overflowed!  Overflowed ");
+    Serial.print(overflows);
+    Serial.println(" times total so far.");
+    Serial.println("**************************************");
+  }
+  else {
+//    Serial.print("lastMillis: ");
+//    Serial.println(lastMillis);
+  }
+
+  lastMillis = millisNow;
+  result = timeOffset + (overflows * ULONG_MAX) + millisNow;
+  return result;
 }
 
 void Util::printWelcomeMessage() {

@@ -31,7 +31,8 @@ enum controllerState_t {
   INITIAL,
   RECEIVED_ID,
   SYNCED_TIME,
-  RECEIVED_COMMANDS
+  RECEIVED_COMMANDS,
+  FETCH_COMMANDS_FAILURE
 };
 
 controllerState_t controllerState = INITIAL;
@@ -56,14 +57,17 @@ struct command_t {
 struct outlet_t {
   String internalName;
   int pin;
+  int numCommands;
+  int numNextCommands;
   command_t commands[MAX_COMMANDS_PER_OUTLET];
+  command_t nextCommands[MAX_COMMANDS_PER_OUTLET];
 };
 
-const outlet_t outlets[] = {
-  { "A", 1 },
-  { "B", 2 },
-  { "C", 3 },
-  { "D", 4 },
+outlet_t outlets[] = {
+  { "A", 0, 0, 0 },
+  { "B", 1, 0, 0 },
+  { "C", 2, 0, 0 },
+  { "D", 3, 0, 0 },
 };
 
 const int numOutlets = sizeof(outlets) / sizeof(outlet_t);
@@ -85,7 +89,8 @@ void setup() {
   Util::printWelcomeMessage();
   Serial.print("Number of outlets: ");
   Serial.println(numOutlets);
-  Serial.println();
+
+  initializeOutletPins();
 
   delay(3000);
 
@@ -103,16 +108,27 @@ void loop() {
       break;
     case RECEIVED_ID:
       timeOffset = getServerTime();
+      timeOffset -= Util::now(0);
       break;
     case SYNCED_TIME:
+      getCommands();
+      break;
+    case RECEIVED_COMMANDS:
+      getCommands();
+      executeCommands();
+      break;
+    case FETCH_COMMANDS_FAILURE:
+      //TODO: Aggressively retry fetching commands here
       getCommands();
       break;
   }
 
   //requestDelay = rand() % 3000 + 1000;
-  requestDelay = 2000;
-  Serial.print("Delay: ");
-  Serial.println(requestDelay);
+  requestDelay = 1000;
+  Serial.println();
+  Serial.print(">>> Delay: ");
+  Serial.print(requestDelay);
+  Serial.println("ms");
   delay(requestDelay);
 }
 
@@ -151,7 +167,8 @@ int getMyId() {
   } while(httpResponse.statusCode != 200);
 
   id = Util::parseIntFromString(httpResponse.response);
-  Serial.print("Received controller id: ");
+  Serial.println();
+  Serial.print(">>> Setting my id to ");
   Serial.println(id);
 
   controllerState = RECEIVED_ID;
@@ -161,7 +178,7 @@ int getMyId() {
 
 unsigned long long getServerTime() {
 
-  unsigned long requestStart = millis();
+  unsigned long requestStart = Util::now(0);
   unsigned long long serverTimestamp;
   String payload = "";
 
@@ -171,7 +188,7 @@ unsigned long long getServerTime() {
     GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
-  unsigned long requestStop = millis();
+  unsigned long requestStop = Util::now(0);
   unsigned long long estimatedLag = (requestStop - requestStart) / 2;
 
   serverTimestamp = (unsigned long long) Util::parseULongLongFromString(httpResponse.response) + estimatedLag;
@@ -203,8 +220,8 @@ void getCommands() {
     GCHttpClient::httpRequest(&server, &getCommandRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
-  Serial.print("Received commands: ");
-  Serial.println(httpResponse.response);
+//  Serial.print("Received commands: ");
+//  Serial.println(httpResponse.response);
 
   parseCommandString(httpResponse.response);
 
@@ -228,6 +245,8 @@ void parseCommandString(char* commandString) {
   commandStringParserState_t state = PARSING_OUTLET_INTERNAL_ID;
   bool error = false;
 
+  resetNextCommandsForAllOutlets();
+
   while(index <= strlen(commandString) && !error) {
     c = commandString[index];
     
@@ -243,9 +262,10 @@ void parseCommandString(char* commandString) {
             state = PARSING_TIMESTAMP;
           } 
           else {
-            Serial.print("Encountered unexpected character in command string while parsing OUTLET_INTERNAL_ID: ");
+            Serial.print("!!! Encountered unexpected character in command string while parsing OUTLET_INTERNAL_ID: ");
             Serial.println(c);
             error = true;
+            break;
           }
         break;
         
@@ -260,9 +280,10 @@ void parseCommandString(char* commandString) {
             state = PARSING_OUTLET_STATE;
           } 
           else {
-            Serial.print("Encountered unexpected character in command string while parsing TIMESTAMP: ");
+            Serial.print("!!! Encountered unexpected character in command string while parsing TIMESTAMP: ");
             Serial.println(c);
             error = true;
+            break;
           }
         break;
         
@@ -280,14 +301,17 @@ void parseCommandString(char* commandString) {
               outletState = ON;
             }
             else {
-              Serial.print("Encountered invalid outlet state in command string: ");
+              Serial.print("!!! Encountered invalid outlet state in command string: ");
               Serial.println(outletStateInt);
               error = true;
+              break;
             }
             stringBuf = "";
             state = PARSING_TIMESTAMP;
-            // TODO: Add command to internal data structure here
-            Serial.print("Parsed command for outletInternalId: ");
+            error = appendOutletNextCommand(outletPin, {outletState, timestamp});
+            if(error) { break; }
+            
+            Serial.print("### Parsed command for outletInternalId: ");
             Serial.print(outletPin);
             Serial.print(", timestamp: ");
             Serial.print(Util::toString(timestamp));
@@ -305,14 +329,18 @@ void parseCommandString(char* commandString) {
               outletState = ON;
             }
             else {
-              Serial.print("Encountered invalid outlet state in command string: ");
+              Serial.print("!!! Encountered invalid outlet state in command string: ");
               Serial.println(outletStateInt);
               error = true;
+              break;
             }
+            
             stringBuf = "";
-            state = PARSING_OUTLET_INTERNAL_ID;
-            // TODO: Add command to internal data structure here
-            Serial.print("Parsed command for outletInternalId: ");
+            state = PARSING_OUTLET_INTERNAL_ID;\
+            error = appendOutletNextCommand(outletPin, {outletState, timestamp});
+            if(error) { break; }
+            
+            Serial.print("### Parsed command for outletInternalId: ");
             Serial.print(outletPin);
             Serial.print(", timestamp: ");
             Serial.print(Util::toString(timestamp));
@@ -321,16 +349,18 @@ void parseCommandString(char* commandString) {
             commandNum = 0;
           } 
           else {
-            Serial.print("Encountered unexpected character in command string while parsing OUTLET_STATE: ");
+            Serial.print("!!! Encountered unexpected character in command string while parsing OUTLET_STATE: ");
             Serial.println(c);
             error = true;
+            break;
           }
         break;
     }
 
     if(stringBuf.length() > maxBufferSize) {
-      Serial.println("Error parsing command string.  Temp buffer is full.");
+      Serial.println("!!! Error parsing command string.  Temp buffer is full.");
       error = true;
+      break;
     }
 
     if(error) {
@@ -339,7 +369,120 @@ void parseCommandString(char* commandString) {
 
     index++;
   }
+
+  if(error) {
+    controllerState = FETCH_COMMANDS_FAILURE;
+  }
+  else {
+    useNextCommands();
+    controllerState = RECEIVED_COMMANDS;  
+  }
   
+}
+
+void executeCommands() {
+  unsigned long long now = Util::now(timeOffset);
+  Serial.print("Now: ");
+  Serial.println(Util::toString(now));
+  int outletPin;
+  outletState_t desiredOutletState;
+  int pinState = LOW;
+  command_t command;
+
+  Serial.println();
+  
+  for(int i = 0; i < numOutlets; i++) {
+    outletPin = outlets[i].pin;
+    desiredOutletState = OFF;
+    
+    for(int j = 0; j < outlets[i].numCommands; j++) {
+      command = outlets[i].commands[j];
+      if(command.executeAt < now) {
+        desiredOutletState = command.outletState;
+      }
+    }
+
+    if(desiredOutletState == ON) {
+      pinState = HIGH;
+    }
+    else {
+      pinState = LOW;
+    }
+
+    
+    Serial.print(">>> Pin ");
+    Serial.print(outletPin);
+    if(pinState == HIGH) {
+      Serial.println(" ON");
+    }
+    else {
+      Serial.println(" OFF");
+    }
+    
+    digitalWrite(outletPin, pinState);
+  }
+}
+
+void resetNextCommandsForOutlet(int outletPin) {
+  for(int i = 0; i < numOutlets; i++) {
+    if(outlets[i].pin == outletPin) {
+      outlets[i].numNextCommands = 0;
+    }
+  }
+}
+
+void resetNextCommandsForAllOutlets() {
+  for(int i = 0; i < numOutlets; i++) {
+    outlets[i].numNextCommands = 0;
+  }
+}
+
+bool appendOutletNextCommand(int outletPin, command_t command) {
+  int numNextCommands;
+  bool error = false;
+  
+  for(int i = 0; i < numOutlets; i++) {
+    if(outlets[i].pin == outletPin) {
+      numNextCommands = outlets[i].numNextCommands;
+//      Serial.print("### Current outlet commands: ");
+//      Serial.println(numCommands);
+
+      if(numNextCommands >= MAX_COMMANDS_PER_OUTLET) {
+        Serial.print("!!! Can't append next command to outlet ");
+        Serial.print(outletPin);
+        Serial.println("; max commands reached");
+        error = true;
+        break;
+      }
+      
+      outlets[i].nextCommands[numNextCommands] = command;
+      outlets[i].numNextCommands++;
+    }
+  }
+
+  return error;
+}
+
+void useNextCommands() {
+  for(int i = 0; i < numOutlets; i++) {
+    for(int j = 0; j < outlets[i].numNextCommands; j++) {
+      outlets[i].commands[j] = outlets[i].nextCommands[j];
+    }
+    outlets[i].numCommands = outlets[i].numNextCommands;
+  }
+}
+
+void initializeOutletPins() {
+  Serial.println();
+  Serial.println(">>> Initializing outlet pins");
+  for(int i = 0; i < numOutlets; i++) {
+    Serial.print("Setting pin ");
+    Serial.print(outlets[i].pin);
+    Serial.println(" to OUTPUT");
+    pinMode(outlets[i].pin, OUTPUT);
+    digitalWrite(outlets[i].pin, LOW);
+  }
+  Serial.println();
 }
 
 

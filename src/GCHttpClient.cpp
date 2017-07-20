@@ -12,7 +12,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
   bool receivedResponse;
   bool done;
 
-  unsigned long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
+  unsigned long long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
   const unsigned long requestTimeout = 4L * 1000L; // delay between updates, in milliseconds
 
   while (!done) {
@@ -28,19 +28,18 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       client.stop();
 
       Serial.println();
-      Serial.print("-----------------------");
-      Serial.println();
-      Serial.print("Making HTTP request ");
+//      Serial.print("-----------------------");
+//      Serial.println();
+//      Serial.print("Making HTTP request ");
+      Serial.print(">>> ");
       Serial.print(endpoint->method);
       Serial.print(" ");
       Serial.print(server->host);
       Serial.print(":");
       Serial.print(server->port);
       Serial.println(endpoint->path);
-      Serial.println();
       if (payloadExists) {
         Serial.println(payload);
-        Serial.println();
       }
     
       // if there's a successful connection:
@@ -67,24 +66,23 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
         }
   
         sentRequest = true;
-        lastRequestTime = millis();
+        lastRequestTime = Util::now(0);
       }
       else {
         // if you couldn't make a connection:
-        Serial.print("HTTP request ");
+        Serial.println();
+        Serial.print("!!! HTTP request ");
         Serial.print(endpoint->method);
         Serial.print(" ");
         Serial.print(endpoint->path);
         Serial.println(" failed.  Couldn't connect.");
-        Serial.print("-----------------------");
-        Serial.println();
         delay(2000);
       }
     }
 
     httpParser->reset();
   
-    while (!(millis() - lastRequestTime > requestTimeout)) {
+    while (!(Util::now(0) - lastRequestTime > requestTimeout)) {
       while (client.available() && !parseError) {
         receivedResponse = true;
         char c = client.read();
@@ -96,14 +94,13 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       }
     }
 
-    if (millis() - lastRequestTime > requestTimeout) {
+    if (Util::now(0) - lastRequestTime > requestTimeout) {
       timeout = true;
-      Serial.println("Request timeout");
+      Serial.println();
+      Serial.println("!!! Request timeout");
       Serial.print("Free memory: ");
       Serial.print(Util::freeRAM());
       Serial.println("B");
-      Serial.print("-----------------------");
-      Serial.println();
     }
 
     if (parseError || timeout) {
@@ -115,19 +112,17 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
     }
   }
 
-  Serial.println("Response: ");
+  Serial.println("### Response: ");
   Serial.print("Status ");
   Serial.println(httpResponse->statusCode);
   Serial.print(httpResponse->response);
   Serial.println();
-  Serial.print("Response buffer used: ");
+  Serial.print("### Response buffer used: ");
   Serial.print((float)httpResponse->responseSize / (float)sizeof(httpResponse->response) * 100);
   Serial.println("%");
-  Serial.print("Free memory: ");
+  Serial.print("### Free memory: ");
   Serial.print(Util::freeRAM());
   Serial.println("B");
-  Serial.print("-----------------------");
-  Serial.println();
 
   delete httpParser;
 
