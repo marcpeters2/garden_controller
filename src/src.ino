@@ -4,16 +4,21 @@
 #include "WifiService.h"
 #include "Util.h"
 
-#define GET "GET"
-#define POST "POST"
-
-#define MAC_ADDRESS_NUM_BYTES 6
+#define DEBUG_COMMAND_EXECUTION false
+#define DEBUG_INTERRUPTS false
+//#define DEBUG_COMMAND_EXECUTION true
+//#define DEBUG_INTERRUPTS true
 
 #define MAX_COMMANDS_PER_OUTLET 5
 
+#define WIFI_SSID "Pudding"
+#define WIFI_PASSWORD "vanilla864"
+//#define WIFI_SSID "OnePlus"
+//#define WIFI_PASSWORD "qwertyui"
 
 httpServer_t server = {
-  "192.168.43.124",
+//  "192.168.43.124",
+  "192.168.1.191",
   8000,
 };
 
@@ -59,8 +64,8 @@ struct outlet_t {
   int pin;
   int numCommands;
   int numNextCommands;
-  command_t commands[MAX_COMMANDS_PER_OUTLET];
-  command_t nextCommands[MAX_COMMANDS_PER_OUTLET];
+  command_t* commands;
+  command_t* nextCommands;
 };
 
 outlet_t outlets[] = {
@@ -78,10 +83,19 @@ enum commandStringParserState_t {
   PARSING_OUTLET_STATE
 };
 
+void initializeCommands() {
+  Serial.println();
+  Serial.println(">>> Initializing outlet commands");
+  for(int i = 0; i < numOutlets; i++) {
+    outlets[i].commands = (command_t*)malloc(MAX_COMMANDS_PER_OUTLET * sizeof(command_t));
+    outlets[i].nextCommands = (command_t*)malloc(MAX_COMMANDS_PER_OUTLET * sizeof(command_t));
+  }
+}
+
 void setup() {
 
   //Initialize serial and wait for port to open:
-  Serial.begin(9600);
+  Serial.begin(19200);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
@@ -91,16 +105,65 @@ void setup() {
   Serial.println(numOutlets);
 
   initializeOutletPins();
+  initializeCommands();
 
-  delay(3000);
+  delay(1000);
 
-  //WifiService::connectToWiFi("Pudding", "vanilla864");
-  WifiService::connectToWiFi("OnePlus", "qwertyui");
+  Util::enableTimer4Interrupts();
+}
+
+
+// Interrupt Service Routine (ISR) for timer TC4
+void TC4_Handler()
+{     
+  // Check for overflow (OVF) interrupt
+  if (TC4->COUNT8.INTFLAG.bit.OVF && TC4->COUNT8.INTENSET.bit.OVF)             
+  {
+    REG_TC4_INTFLAG = TC_INTFLAG_OVF;         // Clear the OVF interrupt flag
+  }
+
+  // Check for match counter 0 (MC0) interrupt
+  if (TC4->COUNT8.INTFLAG.bit.MC0 && TC4->COUNT8.INTENSET.bit.MC0)             
+  {
+    REG_TC4_INTFLAG = TC_INTFLAG_MC0;         // Clear the MC0 interrupt flag
+  }
+
+  // Check for match counter/counter compare 1 (MC1) interrupt
+  if (TC4->COUNT8.INTFLAG.bit.MC1 && TC4->COUNT8.INTENSET.bit.MC1)           
+  {
+    unsigned long long now = Util::now(0);
+    unsigned long long end;
+    static unsigned long long lastNow = Util::now(0);
+    
+    if (DEBUG_INTERRUPTS) {
+      Serial.print("### Time since last interrupt: ");
+      Serial.println(Util::toString(now - lastNow));  
+    }
+    
+    lastNow = now;
+    executeCommands();
+    end = Util::now(0);
+    
+    REG_TC4_INTFLAG = TC_INTFLAG_MC1;        // Clear the MC1 interrupt flag
+
+    if (DEBUG_INTERRUPTS) {
+      Serial.print("### Interrupt routine execution time: ");
+      Serial.println(Util::toString(now - end)); 
+    }
+  }
 }
 
 void loop() {
 
   int requestDelay;
+  bool networkConnected;
+
+  networkConnected = WifiService::isConnected();
+
+  if(!networkConnected) {
+    WifiService::connectToWiFi(WIFI_SSID, WIFI_PASSWORD);
+    return;
+  }
   
   switch(controllerState) {
     case INITIAL:
@@ -114,11 +177,15 @@ void loop() {
       getCommands();
       break;
     case RECEIVED_COMMANDS:
+      timeOffset = getServerTime();
+      timeOffset -= Util::now(0);
       getCommands();
-      executeCommands();
+      //executeCommands();
       break;
     case FETCH_COMMANDS_FAILURE:
       //TODO: Aggressively retry fetching commands here
+      timeOffset = getServerTime();
+      timeOffset -= Util::now(0);
       getCommands();
       break;
   }
@@ -219,9 +286,6 @@ void getCommands() {
   do {
     GCHttpClient::httpRequest(&server, &getCommandRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
-
-//  Serial.print("Received commands: ");
-//  Serial.println(httpResponse.response);
 
   parseCommandString(httpResponse.response);
 
@@ -382,23 +446,33 @@ void parseCommandString(char* commandString) {
 
 void executeCommands() {
   unsigned long long now = Util::now(timeOffset);
-  Serial.print("Now: ");
-  Serial.println(Util::toString(now));
+
+  if (DEBUG_COMMAND_EXECUTION) {
+    Serial.println();
+    Serial.print("Now: ");
+    Serial.println(Util::toString(now));  
+  }
+  
   int outletPin;
   outletState_t desiredOutletState;
   int pinState = LOW;
   command_t command;
-
-  Serial.println();
+  bool shouldChangePinState;
   
   for(int i = 0; i < numOutlets; i++) {
     outletPin = outlets[i].pin;
     desiredOutletState = OFF;
+    shouldChangePinState = false;
+
+    if (outlets[i].numCommands == 0) {
+      shouldChangePinState = true;
+    }
     
     for(int j = 0; j < outlets[i].numCommands; j++) {
       command = outlets[i].commands[j];
       if(command.executeAt < now) {
         desiredOutletState = command.outletState;
+        shouldChangePinState = true;
       }
     }
 
@@ -409,18 +483,22 @@ void executeCommands() {
       pinState = LOW;
     }
 
-    
-    Serial.print(">>> Pin ");
-    Serial.print(outletPin);
-    if(pinState == HIGH) {
-      Serial.println(" ON");
+    if(shouldChangePinState) {
+      digitalWrite(outletPin, pinState);
     }
-    else {
-      Serial.println(" OFF");
+
+    if (DEBUG_COMMAND_EXECUTION) {
+      Serial.print(">>> Pin ");
+      Serial.print(outletPin);
+      if(digitalRead(outletPin) == HIGH) {
+        Serial.println(" ON");
+      }
+      else {
+        Serial.println(" OFF");
+      }
     }
-    
-    digitalWrite(outletPin, pinState);
   }
+  
 }
 
 void resetNextCommandsForOutlet(int outletPin) {
@@ -464,10 +542,15 @@ bool appendOutletNextCommand(int outletPin, command_t command) {
 }
 
 void useNextCommands() {
+  command_t* temp;
+  
   for(int i = 0; i < numOutlets; i++) {
-    for(int j = 0; j < outlets[i].numNextCommands; j++) {
-      outlets[i].commands[j] = outlets[i].nextCommands[j];
-    }
+//    for(int j = 0; j < outlets[i].numNextCommands; j++) {
+//      outlets[i].commands[j] = outlets[i].nextCommands[j];
+//    }
+    temp = outlets[i].commands;
+    outlets[i].commands = outlets[i].nextCommands;
+    outlets[i].nextCommands = temp;
     outlets[i].numCommands = outlets[i].numNextCommands;
   }
 }
@@ -478,12 +561,15 @@ void initializeOutletPins() {
   for(int i = 0; i < numOutlets; i++) {
     Serial.print("Setting pin ");
     Serial.print(outlets[i].pin);
-    Serial.println(" to OUTPUT");
+    Serial.print(" (outlet ");
+    Serial.print(outlets[i].internalName);
+    Serial.println(") to OUTPUT");
     pinMode(outlets[i].pin, OUTPUT);
     digitalWrite(outlets[i].pin, LOW);
   }
-  Serial.println();
 }
+
+
 
 
 

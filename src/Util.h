@@ -12,6 +12,8 @@ class Util {
     static int charToInt(char c);
     static bool charIsNumeric(char c);
     static unsigned long long now(unsigned long long);
+    static void enableTimer4Interrupts();
+    static void disableTimer4Interrupts();
     static void printWelcomeMessage();
 };
 

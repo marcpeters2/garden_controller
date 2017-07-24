@@ -7,6 +7,9 @@
 #include "HttpParser.h"
 #include "Util.h"
 
+#define GET "GET"
+#define POST "POST"
+
 struct httpServer_t {
   String host;
   int port;

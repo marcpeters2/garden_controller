@@ -1,46 +1,56 @@
 #include "WifiService.h"
-#include <SPI.h>
-#include <WiFi101.h>
 
-void WifiService::connectToWiFi(const char* ssid, const char* password) {
-  int status = WL_IDLE_STATUS;     // the WiFi radio's status
-  
-  // check for the presence of the shield:
-  if (WiFi.status() == WL_NO_SHIELD) {
-    Serial.println("WiFi shield not present");
-    // don't continue:
-    while (true);
+#define WIFI_CONNECT_TIMEOUT_MS 2000
+
+unsigned long long _wifiLastConnectTimestamp = 0;
+
+bool WifiService::isConnected() {
+  static int lastStatus = WL_IDLE_STATUS;
+  int status = WiFi.status();
+
+  if(lastStatus != WL_CONNECTED && status == WL_CONNECTED) {
+    Serial.println("### WiFi Connected!");
+    printCurrentNet();
+    printWiFiData();
   }
 
-  // attempt to connect to WiFi network:
-  while ( status != WL_CONNECTED) {
-    Serial.print(">>> Attempt connection to WPA SSID: ");
-    Serial.println(ssid);
-    // Connect to WPA/WPA2 network:
-    status = WiFi.begin(ssid, password);
-
-    // wait 10 seconds for connection:
-    delay(1000);
-  }
-
-  // you're connected now, so print out the data:
-  Serial.println("Connected!");
-  printCurrentNet();
-  printWiFiData();
+  lastStatus = status;
+  return status == WL_CONNECTED;
 }
 
-const char* WifiService::wifiSignalQuality(int rssi) {
+void WifiService::connectToWiFi(const char* ssid, const char* password) {
+  //int status = WL_IDLE_STATUS;     // the WiFi radio's status
+
+  int status = WiFi.status();
+  unsigned long long now = Util::now(0);
+  static bool firstCall = true;
+
+  if(status == WL_CONNECTED) {
+    return;
+  }
+  else if(firstCall || now - _wifiLastConnectTimestamp > WIFI_CONNECT_TIMEOUT_MS) {
+    _wifiLastConnectTimestamp = now;
+    Serial.println();
+    Serial.print(">>> Attempt connection to WiFi SSID: ");
+    Serial.println(ssid);
+    WiFi.begin(ssid, password);
+  }
+}
+
+void WifiService::printWifiSignalQuality(int rssi) {
+  Serial.print("signal quality: ");
+  
   if (rssi > -60) {
-    return "High";
+    Serial.println("High");
   }
   else if (rssi > -80) {
-    return "Medium";
+    Serial.println("Medium");
   } 
   else if (rssi > -90) {
-    return "Low";
+    Serial.println("Low");
   }
   else {
-    return "Unuseable";
+    Serial.println("Unuseable");
   }
 }
 
@@ -93,13 +103,11 @@ void WifiService::printCurrentNet() {
   long rssi = WiFi.RSSI();
   Serial.print("signal strength (RSSI): ");
   Serial.println(rssi);
-  Serial.print("signal quality: ");
-  Serial.println(WifiService::wifiSignalQuality(rssi));
+  printWifiSignalQuality(rssi);
 
   // print the encryption type:
   byte encryption = WiFi.encryptionType();
   Serial.print("Encryption Type: ");
   Serial.println(encryption, HEX);
-  Serial.println();
 }
 
