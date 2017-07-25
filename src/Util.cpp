@@ -54,7 +54,7 @@ int Util::parseIntFromString(char* buf) {
   return result;
 }
 
-unsigned long long Util::parseULongLongFromString(char* buf) {
+unsigned long long Util::toULL(char* buf) {
   int index = 0;
   int charAsInt;
   //int bufferSize = sizeof(buf) / sizeof(char);
@@ -92,8 +92,14 @@ bool Util::charIsNumeric(char c) {
 
 unsigned long long _timeOffset;
 
-void Util::setTimeOffset(unsigned long long timeOffset) {
-  _timeOffset = timeOffset;
+void Util::setTime(unsigned long long _time) {
+  Serial.println();
+  Serial.print("### Setting time to ");
+  Serial.println(toString(_time));
+
+  noT4interrupts();
+    _timeOffset = _time - ucNow();
+  T4interrupts();
 }
 
 unsigned long long _timeSlewStart;
@@ -102,31 +108,64 @@ int _timeSlewAmount;
 bool _timeSlewing = false;
 
 void Util::slewTime(unsigned int duration, int amount) {
-  freezeSlew();
-  unsigned long long ucNow = ucNow();
-  _timeSlewStart = ucNow;
-  _timeSlewEnd = ucNow + duration;
-  _timeSlewAmount = amount;
-  _timeSlewing = true;
+
+  if(duration > MAX_TIME_SLEW_DURATION) {
+    Serial.println();
+    Serial.print("!!! Util::slewTime called with invalid duration: ");
+    Serial.println(duration);
+    while(true); // Halt
+  }
+
+  noT4interrupts();
+    freezeSlew();
+    unsigned long long _ucNow = ucNow();
+    _timeSlewStart = _ucNow;
+    _timeSlewEnd = _ucNow + duration;
+    _timeSlewAmount = amount;
+    _timeSlewing = true;
+  T4interrupts();
+
+  Serial.println();
+  Serial.print("### Slewing time by ");
+  Serial.print(amount);
+  Serial.print("ms over ");
+  Serial.print(duration);
+  Serial.println("s");
 }
 
 int Util::calculateSlew() {
-  unsigned long long ucNow = ucNow();
+  unsigned long long _ucNow = ucNow();
   
-  if(!_timeSlewing || ucNow <= _timeSlewStart) {
+  if(!_timeSlewing || _ucNow <= _timeSlewStart) {
     return 0;
   }
-  else if(ucNow >= _timeSlewEnd) {
+  else if(_ucNow >= _timeSlewEnd) {
     return _timeSlewAmount;
   }
-  else () { // ucNow falls between _timeSlewStart and _timeSlewEnd
-    return _timeSlewAmount * ((ucNow - _timeSlewStart) / (_timeSlewEnd - _timeSlewStart));
+  else { // ucNow falls between _timeSlewStart and _timeSlewEnd
+    // The difference between _timeSlewEnd and _timeSlewStart is guaranteed to be less than MAX_TIME_SLEW_DURATION
+    // due to the gating check in Util::slewTime().  Due to this, it's safe to perform the (double) casting below.
+    return (int) (_timeSlewAmount * (((double)(_ucNow - _timeSlewStart)) / ((double)(_timeSlewEnd - _timeSlewStart))));
   }
 }
 
 void Util::freezeSlew() {
+  int slew = calculateSlew();
+  Serial.println();
+  Serial.print("### Permanently adding time slew of ");
+  Serial.print(slew);
+  Serial.print(" to time offset of ");
+  Serial.println(toString(_timeOffset));
+  Serial.print("### Current \"Now\": ");
+  Serial.println(toString(now()));
+  
   _timeOffset += calculateSlew();
   _timeSlewing = false;
+
+  Serial.print("### New time offset is ");
+  Serial.println(toString(_timeOffset));
+  Serial.print("### \"Now\": ");
+  Serial.println(toString(now()));
 }
 
 unsigned long lastMillis = millis();
@@ -211,9 +250,13 @@ void Util::enableTimer4Interrupts() {
   Serial.println("### Interrupts initialized");
 }
 
-void Util::disableTimer4Interrupts() {
+void Util::noT4interrupts() {
   //TODO: This function hasn't been tested
   REG_TC4_INTENCLR = TC_INTENCLR_MC1 | TC_INTENCLR_MC0 | TC_INTENCLR_OVF;     // Disable TC4 interrupts
+}
+
+void Util::T4interrupts() {
+  REG_TC4_INTENSET = TC_INTENSET_MC1 | TC_INTENSET_MC0 | TC_INTENSET_OVF;     // Enable TC4 interrupts
 }
 
 void Util::printWelcomeMessage() {

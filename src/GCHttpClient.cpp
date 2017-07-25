@@ -66,7 +66,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
         }
   
         sentRequest = true;
-        lastRequestTime = Util::now(0);
+        lastRequestTime = Util::ucNow();
       }
       else {
         // if you couldn't make a connection:
@@ -82,7 +82,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
 
     httpParser->reset();
   
-    while (!(Util::now(0) - lastRequestTime > requestTimeout)) {
+    while (!(Util::ucNow() - lastRequestTime > requestTimeout)) {
       while (client.available() && !parseError) {
         receivedResponse = true;
         char c = client.read();
@@ -94,7 +94,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       }
     }
 
-    if (Util::now(0) - lastRequestTime > requestTimeout) {
+    if (Util::ucNow() - lastRequestTime > requestTimeout) {
       timeout = true;
       Serial.println();
       Serial.println("!!! Request timeout");

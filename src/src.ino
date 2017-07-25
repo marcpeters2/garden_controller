@@ -3,11 +3,14 @@
 #include "GCHttpClient.h"
 #include "WifiService.h"
 #include "Util.h"
+//#include <atomic.h>
 
-#define DEBUG_COMMAND_EXECUTION false
-#define DEBUG_INTERRUPTS false
-//#define DEBUG_COMMAND_EXECUTION true
-//#define DEBUG_INTERRUPTS true
+//#define DEBUG_COMMAND_EXECUTION false
+//#define DEBUG_INTERRUPTS false
+#define DEBUG_COMMAND_EXECUTION true
+#define DEBUG_INTERRUPTS true
+
+#define TIME_CATCHUP_PERIOD 1000
 
 #define MAX_COMMANDS_PER_OUTLET 5
 
@@ -95,10 +98,18 @@ void initializeCommands() {
 void setup() {
 
   //Initialize serial and wait for port to open:
-  Serial.begin(19200);
+  Serial.begin(115200);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
+
+//  Serial.println(sizeof(float));
+//  Serial.println(sizeof(double));
+//  Serial.println(sizeof(long double));
+//  Serial.println(sizeof(int));
+
+//  int test = (int) ((int)100) * (double)((100000000ULL - 99990000ULL) / (100010000ULL - 99999000ULL));
+//  Serial.println(test);
 
   Util::printWelcomeMessage();
   Serial.print("Number of outlets: ");
@@ -108,8 +119,6 @@ void setup() {
   initializeCommands();
 
   delay(1000);
-
-  Util::enableTimer4Interrupts();
 }
 
 
@@ -131,18 +140,21 @@ void TC4_Handler()
   // Check for match counter/counter compare 1 (MC1) interrupt
   if (TC4->COUNT8.INTFLAG.bit.MC1 && TC4->COUNT8.INTENSET.bit.MC1)           
   {
-    unsigned long long now = Util::now(0);
+    unsigned long long now = Util::ucNow();
     unsigned long long end;
-    static unsigned long long lastNow = Util::now(0);
+    static unsigned long long lastNow = Util::ucNow();
     
     if (DEBUG_INTERRUPTS) {
       Serial.print("### Time since last interrupt: ");
       Serial.println(Util::toString(now - lastNow));  
+      if(now - lastNow > 101 || (now - lastNow < 94 && now - lastNow > 0)) {
+        //while (true);
+      }
     }
     
     lastNow = now;
     executeCommands();
-    end = Util::now(0);
+    end = Util::ucNow();
     
     REG_TC4_INTFLAG = TC_INTFLAG_MC1;        // Clear the MC1 interrupt flag
 
@@ -157,6 +169,9 @@ void loop() {
 
   int requestDelay;
   bool networkConnected;
+  unsigned long long _time;
+  static bool interruptsInitialized = false;
+  int drift;
 
   networkConnected = WifiService::isConnected();
 
@@ -170,22 +185,30 @@ void loop() {
       myId = getMyId();
       break;
     case RECEIVED_ID:
-      timeOffset = getServerTime();
-      timeOffset -= Util::now(0);
+      _time = getServerTime();
+      Util::setTime(_time);
       break;
     case SYNCED_TIME:
       getCommands();
       break;
     case RECEIVED_COMMANDS:
-      timeOffset = getServerTime();
-      timeOffset -= Util::now(0);
+      if (!interruptsInitialized) {
+        Util::enableTimer4Interrupts();
+        interruptsInitialized = true;  
+      }
+      _time = getServerTime();
+      drift = _time - Util::now();
+      Util::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+      delay(1000);
       getCommands();
       //executeCommands();
       break;
     case FETCH_COMMANDS_FAILURE:
       //TODO: Aggressively retry fetching commands here
-      timeOffset = getServerTime();
-      timeOffset -= Util::now(0);
+      _time = getServerTime();
+      drift = _time - Util::now();
+      Util::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+      delay(1000);
       getCommands();
       break;
   }
@@ -245,7 +268,7 @@ int getMyId() {
 
 unsigned long long getServerTime() {
 
-  unsigned long requestStart = Util::now(0);
+  unsigned long requestStart = Util::ucNow();
   unsigned long long serverTimestamp;
   String payload = "";
 
@@ -255,16 +278,18 @@ unsigned long long getServerTime() {
     GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
-  unsigned long requestStop = Util::now(0);
+  unsigned long requestStop = Util::ucNow();
   unsigned long long estimatedLag = (requestStop - requestStart) / 2;
 
-  serverTimestamp = (unsigned long long) Util::parseULongLongFromString(httpResponse.response) + estimatedLag;
-  Serial.print("Received current timestamp: ");
+  serverTimestamp = (unsigned long long) Util::toULL(httpResponse.response) + estimatedLag;
+  Serial.print("### Server time: ");
   Serial.println(httpResponse.response);
-  Serial.print("Estimated lag: ");
+  Serial.print("### Estimated lag: ");
   Serial.println(Util::toString(estimatedLag));
-  Serial.print("Adjusted timestamp: ");
+  Serial.print("### Adjusted server time: ");
   Serial.println(Util::toString(serverTimestamp));
+  Serial.print("### Microcontroller current time: ");
+  Serial.println(Util::toString(Util::now()));
 
   controllerState = SYNCED_TIME;
   
@@ -339,7 +364,7 @@ void parseCommandString(char* commandString) {
           }
           else if(c == ',') {
             stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
-            timestamp = Util::parseULongLongFromString(charArrayBuf);
+            timestamp = Util::toULL(charArrayBuf);
             stringBuf = "";
             state = PARSING_OUTLET_STATE;
           } 
@@ -445,7 +470,7 @@ void parseCommandString(char* commandString) {
 }
 
 void executeCommands() {
-  unsigned long long now = Util::now(timeOffset);
+  unsigned long long now = Util::now();
 
   if (DEBUG_COMMAND_EXECUTION) {
     Serial.println();
@@ -549,9 +574,12 @@ void useNextCommands() {
 //      outlets[i].commands[j] = outlets[i].nextCommands[j];
 //    }
     temp = outlets[i].commands;
-    outlets[i].commands = outlets[i].nextCommands;
-    outlets[i].nextCommands = temp;
-    outlets[i].numCommands = outlets[i].numNextCommands;
+    
+    Util::noT4interrupts();
+      outlets[i].commands = outlets[i].nextCommands;
+      outlets[i].nextCommands = temp;
+      outlets[i].numCommands = outlets[i].numNextCommands;
+    Util::T4interrupts();
   }
 }
 
