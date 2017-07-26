@@ -1,6 +1,11 @@
 #include "GCHttpClient.h"
 
 WiFiClient client;
+bool _DEBUG_HTTP_CALLS = true;
+
+void GCHttpClient::debugHttpCalls(bool val) {
+  _DEBUG_HTTP_CALLS = val;
+}
 
 void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse) {
   bool payloadExists = payload.length() > 0;
@@ -27,19 +32,18 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       // This will free the socket on the WiFi shield
       client.stop();
 
-      Serial.println();
-//      Serial.print("-----------------------");
-//      Serial.println();
-//      Serial.print("Making HTTP request ");
-      Serial.print(">>> ");
-      Serial.print(endpoint->method);
-      Serial.print(" ");
-      Serial.print(server->host);
-      Serial.print(":");
-      Serial.print(server->port);
-      Serial.println(endpoint->path);
-      if (payloadExists) {
-        Serial.println(payload);
+      if(_DEBUG_HTTP_CALLS) {
+        Serial.println();
+        Serial.print(">>> ");
+        Serial.print(endpoint->method);
+        Serial.print(" ");
+        Serial.print(server->host);
+        Serial.print(":");
+        Serial.print(server->port);
+        Serial.println(endpoint->path);
+        if (payloadExists) {
+          Serial.println(payload);
+        }
       }
     
       // if there's a successful connection:
@@ -66,7 +70,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
         }
   
         sentRequest = true;
-        lastRequestTime = Util::ucNow();
+        lastRequestTime = TimeService::ucNow();
       }
       else {
         // if you couldn't make a connection:
@@ -82,7 +86,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
 
     httpParser->reset();
   
-    while (!(Util::ucNow() - lastRequestTime > requestTimeout)) {
+    while (!(TimeService::ucNow() - lastRequestTime > requestTimeout)) {
       while (client.available() && !parseError) {
         receivedResponse = true;
         char c = client.read();
@@ -94,7 +98,7 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       }
     }
 
-    if (Util::ucNow() - lastRequestTime > requestTimeout) {
+    if (TimeService::ucNow() - lastRequestTime > requestTimeout) {
       timeout = true;
       Serial.println();
       Serial.println("!!! Request timeout");
@@ -112,17 +116,19 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
     }
   }
 
-  Serial.println("### Response: ");
-  Serial.print("Status ");
-  Serial.println(httpResponse->statusCode);
-  Serial.print(httpResponse->response);
-  Serial.println();
-  Serial.print("### Response buffer used: ");
-  Serial.print((float)httpResponse->responseSize / (float)sizeof(httpResponse->response) * 100);
-  Serial.println("%");
-  Serial.print("### Free memory: ");
-  Serial.print(Util::freeRAM());
-  Serial.println("B");
+  if(_DEBUG_HTTP_CALLS) {
+    Serial.println("### Response: ");
+    Serial.print("Status ");
+    Serial.println(httpResponse->statusCode);
+    Serial.print(httpResponse->response);
+    Serial.println();
+    Serial.print("### Response buffer used: ");
+    Serial.print((float)httpResponse->responseSize / (float)sizeof(httpResponse->response) * 100);
+    Serial.println("%");
+    Serial.print("### Free memory: ");
+    Serial.print(Util::freeRAM());
+    Serial.println("B");
+  }
 
   delete httpParser;
 

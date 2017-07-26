@@ -22,7 +22,7 @@ void WifiService::connectToWiFi(const char* ssid, const char* password) {
   //int status = WL_IDLE_STATUS;     // the WiFi radio's status
 
   int status = WiFi.status();
-  unsigned long long now = Util::ucNow();
+  unsigned long long now = TimeService::ucNow();
   static bool firstCall = true;
 
   if(status == WL_CONNECTED) {

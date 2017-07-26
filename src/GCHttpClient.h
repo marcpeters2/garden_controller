@@ -6,6 +6,7 @@
 #include <WiFi101.h>
 #include "HttpParser.h"
 #include "Util.h"
+#include "TimeService.h"
 
 #define GET "GET"
 #define POST "POST"
@@ -22,6 +23,7 @@ struct httpEndpoint_t {
 
 class GCHttpClient {
   public:
+    static void debugHttpCalls(bool);
     static void httpRequest(httpServer_t*, httpEndpoint_t*, String, httpResponse_t*);
 };
 

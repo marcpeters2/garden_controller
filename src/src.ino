@@ -1,18 +1,22 @@
+//#define DEBUG_COMMAND_EXECUTION false
+#define DEBUG_INTERRUPTS false
+#define DEBUG_HTTP_CALLS false
+#define DEBUG_COMMAND_PARSING false
+#define DEBUG_COMMAND_EXECUTION true
+#define DEBUG_TIME_CHANGES false
+//#define DEBUG_INTERRUPTS true
+//#define DEBUG_HTTP_CALLS true
+
 #include <string.h>
 #include <SPI.h>
 #include "GCHttpClient.h"
 #include "WifiService.h"
 #include "Util.h"
-//#include <atomic.h>
-
-//#define DEBUG_COMMAND_EXECUTION false
-//#define DEBUG_INTERRUPTS false
-#define DEBUG_COMMAND_EXECUTION true
-#define DEBUG_INTERRUPTS true
+#include "TimeService.h"
 
 #define TIME_CATCHUP_PERIOD 1000
 
-#define MAX_COMMANDS_PER_OUTLET 5
+#define MAX_COMMANDS_PER_OUTLET 10
 
 #define WIFI_SSID "Pudding"
 #define WIFI_PASSWORD "vanilla864"
@@ -65,6 +69,7 @@ struct command_t {
 struct outlet_t {
   String internalName;
   int pin;
+  int pinState; // Cached value of pin state (HIGH or LOW).  Should always mirror what would be returned by digitalRead(pin)
   int numCommands;
   int numNextCommands;
   command_t* commands;
@@ -72,10 +77,10 @@ struct outlet_t {
 };
 
 outlet_t outlets[] = {
-  { "A", 0, 0, 0 },
-  { "B", 1, 0, 0 },
-  { "C", 2, 0, 0 },
-  { "D", 3, 0, 0 },
+  { "A", 0, LOW, 0, 0 },
+  { "B", 1, LOW, 0, 0 },
+  { "C", 2, LOW, 0, 0 },
+  { "D", 3, LOW, 0, 0 },
 };
 
 const int numOutlets = sizeof(outlets) / sizeof(outlet_t);
@@ -103,20 +108,14 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
-//  Serial.println(sizeof(float));
-//  Serial.println(sizeof(double));
-//  Serial.println(sizeof(long double));
-//  Serial.println(sizeof(int));
-
-//  int test = (int) ((int)100) * (double)((100000000ULL - 99990000ULL) / (100010000ULL - 99999000ULL));
-//  Serial.println(test);
-
   Util::printWelcomeMessage();
   Serial.print("Number of outlets: ");
   Serial.println(numOutlets);
 
   initializeOutletPins();
   initializeCommands();
+  GCHttpClient::debugHttpCalls(DEBUG_HTTP_CALLS);
+  TimeService::debugTimeChanges(DEBUG_TIME_CHANGES);
 
   delay(1000);
 }
@@ -140,9 +139,9 @@ void TC4_Handler()
   // Check for match counter/counter compare 1 (MC1) interrupt
   if (TC4->COUNT8.INTFLAG.bit.MC1 && TC4->COUNT8.INTENSET.bit.MC1)           
   {
-    unsigned long long now = Util::ucNow();
+    unsigned long long now = TimeService::ucNow();
     unsigned long long end;
-    static unsigned long long lastNow = Util::ucNow();
+    static unsigned long long lastNow = TimeService::ucNow();
     
     if (DEBUG_INTERRUPTS) {
       Serial.print("### Time since last interrupt: ");
@@ -154,7 +153,7 @@ void TC4_Handler()
     
     lastNow = now;
     executeCommands();
-    end = Util::ucNow();
+    end = TimeService::ucNow();
     
     REG_TC4_INTFLAG = TC_INTFLAG_MC1;        // Clear the MC1 interrupt flag
 
@@ -186,7 +185,7 @@ void loop() {
       break;
     case RECEIVED_ID:
       _time = getServerTime();
-      Util::setTime(_time);
+      TimeService::setTime(_time);
       break;
     case SYNCED_TIME:
       getCommands();
@@ -197,17 +196,16 @@ void loop() {
         interruptsInitialized = true;  
       }
       _time = getServerTime();
-      drift = _time - Util::now();
-      Util::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+      drift = _time - TimeService::now();
+      TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
       delay(1000);
       getCommands();
-      //executeCommands();
       break;
     case FETCH_COMMANDS_FAILURE:
       //TODO: Aggressively retry fetching commands here
       _time = getServerTime();
-      drift = _time - Util::now();
-      Util::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+      drift = _time - TimeService::now();
+      TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
       delay(1000);
       getCommands();
       break;
@@ -268,7 +266,7 @@ int getMyId() {
 
 unsigned long long getServerTime() {
 
-  unsigned long requestStart = Util::ucNow();
+  unsigned long requestStart = TimeService::ucNow();
   unsigned long long serverTimestamp;
   String payload = "";
 
@@ -278,18 +276,21 @@ unsigned long long getServerTime() {
     GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse);
   } while(httpResponse.statusCode != 200);
 
-  unsigned long requestStop = Util::ucNow();
+  unsigned long requestStop = TimeService::ucNow();
   unsigned long long estimatedLag = (requestStop - requestStart) / 2;
 
   serverTimestamp = (unsigned long long) Util::toULL(httpResponse.response) + estimatedLag;
-  Serial.print("### Server time: ");
-  Serial.println(httpResponse.response);
-  Serial.print("### Estimated lag: ");
-  Serial.println(Util::toString(estimatedLag));
-  Serial.print("### Adjusted server time: ");
-  Serial.println(Util::toString(serverTimestamp));
-  Serial.print("### Microcontroller current time: ");
-  Serial.println(Util::toString(Util::now()));
+
+  if(DEBUG_TIME_CHANGES) {
+    Serial.print("### Server time: ");
+    Serial.println(httpResponse.response);
+    Serial.print("### Estimated lag: ");
+    Serial.println(Util::toString(estimatedLag));
+    Serial.print("### Adjusted server time: ");
+    Serial.println(Util::toString(serverTimestamp));
+    Serial.print("### Microcontroller current time: ");
+    Serial.println(Util::toString(TimeService::now()));
+  }
 
   controllerState = SYNCED_TIME;
   
@@ -350,6 +351,9 @@ void parseCommandString(char* commandString) {
             stringBuf = "";
             state = PARSING_TIMESTAMP;
           } 
+          else if(c == '\n' || c == '\0') { // In case no commands were received
+            break;
+          }
           else {
             Serial.print("!!! Encountered unexpected character in command string while parsing OUTLET_INTERNAL_ID: ");
             Serial.println(c);
@@ -399,13 +403,15 @@ void parseCommandString(char* commandString) {
             state = PARSING_TIMESTAMP;
             error = appendOutletNextCommand(outletPin, {outletState, timestamp});
             if(error) { break; }
-            
-            Serial.print("### Parsed command for outletInternalId: ");
-            Serial.print(outletPin);
-            Serial.print(", timestamp: ");
-            Serial.print(Util::toString(timestamp));
-            Serial.print(", state: ");
-            Serial.println(outletStateInt);
+
+            if(DEBUG_COMMAND_PARSING) {
+              Serial.print("### Parsed command for outletInternalId: ");
+              Serial.print(outletPin);
+              Serial.print(", timestamp: ");
+              Serial.print(Util::toString(timestamp));
+              Serial.print(", state: ");
+              Serial.println(outletStateInt);
+            }
             commandNum++;
           } 
           else if(c == '\n' || c == '\0') {
@@ -428,13 +434,15 @@ void parseCommandString(char* commandString) {
             state = PARSING_OUTLET_INTERNAL_ID;\
             error = appendOutletNextCommand(outletPin, {outletState, timestamp});
             if(error) { break; }
-            
-            Serial.print("### Parsed command for outletInternalId: ");
-            Serial.print(outletPin);
-            Serial.print(", timestamp: ");
-            Serial.print(Util::toString(timestamp));
-            Serial.print(", state: ");
-            Serial.println(outletStateInt);
+
+            if(DEBUG_COMMAND_PARSING) {
+              Serial.print("### Parsed command for outletInternalId: ");
+              Serial.print(outletPin);
+              Serial.print(", timestamp: ");
+              Serial.print(Util::toString(timestamp));
+              Serial.print(", state: ");
+              Serial.println(outletStateInt);
+            }
             commandNum = 0;
           } 
           else {
@@ -470,22 +478,18 @@ void parseCommandString(char* commandString) {
 }
 
 void executeCommands() {
-  unsigned long long now = Util::now();
-
-  if (DEBUG_COMMAND_EXECUTION) {
-    Serial.println();
-    Serial.print("Now: ");
-    Serial.println(Util::toString(now));  
-  }
+  unsigned long long now = TimeService::now();
   
   int outletPin;
   outletState_t desiredOutletState;
+  int initialPinState;
   int pinState = LOW;
   command_t command;
   bool shouldChangePinState;
   
   for(int i = 0; i < numOutlets; i++) {
     outletPin = outlets[i].pin;
+    initialPinState = outlets[i].pinState;
     desiredOutletState = OFF;
     shouldChangePinState = false;
 
@@ -510,17 +514,20 @@ void executeCommands() {
 
     if(shouldChangePinState) {
       digitalWrite(outletPin, pinState);
+      outlets[i].pinState = pinState;
     }
 
-    if (DEBUG_COMMAND_EXECUTION) {
+    if (DEBUG_COMMAND_EXECUTION && pinState != initialPinState) {
       Serial.print(">>> Pin ");
       Serial.print(outletPin);
-      if(digitalRead(outletPin) == HIGH) {
-        Serial.println(" ON");
+      if (outlets[i].pinState == HIGH) {
+        Serial.print(" ON (time: ");
       }
       else {
-        Serial.println(" OFF");
+        Serial.print(" OFF (time: ");
       }
+      Serial.print(Util::toString(now));
+      Serial.println(")");
     }
   }
   
@@ -594,6 +601,7 @@ void initializeOutletPins() {
     Serial.println(") to OUTPUT");
     pinMode(outlets[i].pin, OUTPUT);
     digitalWrite(outlets[i].pin, LOW);
+    outlets[i].pinState = LOW;
   }
 }
 
