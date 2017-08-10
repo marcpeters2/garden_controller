@@ -1,9 +1,9 @@
 //#define DEBUG_COMMAND_EXECUTION false
-#define DEBUG_INTERRUPTS false
-#define DEBUG_HTTP_CALLS false
-#define DEBUG_COMMAND_PARSING false
+#define DEBUG_INTERRUPTS true
+#define DEBUG_HTTP_CALLS true
+#define DEBUG_COMMAND_PARSING true
 #define DEBUG_COMMAND_EXECUTION true
-#define DEBUG_TIME_CHANGES false
+#define DEBUG_TIME_CHANGES true
 //#define DEBUG_INTERRUPTS true
 //#define DEBUG_HTTP_CALLS true
 
@@ -13,15 +13,13 @@
 #include "WifiService.h"
 #include "Util.h"
 #include "TimeService.h"
+// Config.h defines application secrets, and is not committed to source control.
+// Two #defines should exist in the file: WIFI_SSID and WIFI_PASSWORD
+#include "Config.h"
 
 #define TIME_CATCHUP_PERIOD 1000
 
 #define MAX_COMMANDS_PER_OUTLET 10
-
-#define WIFI_SSID "Pudding"
-#define WIFI_PASSWORD "vanilla864"
-//#define WIFI_SSID "OnePlus"
-//#define WIFI_PASSWORD "qwertyui"
 
 httpServer_t server = {
 //  "192.168.43.124",
@@ -104,9 +102,8 @@ void setup() {
 
   //Initialize serial and wait for port to open:
   Serial.begin(115200);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
-  }
+
+  delay(1000); // Wait for serial port to connect.  while (!Serial) will hang when device is not connected via USB
 
   Util::printWelcomeMessage();
   Serial.print("Number of outlets: ");
@@ -213,10 +210,10 @@ void loop() {
 
   //requestDelay = rand() % 3000 + 1000;
   requestDelay = 1000;
-  Serial.println();
-  Serial.print(">>> Delay: ");
-  Serial.print(requestDelay);
-  Serial.println("ms");
+//  Serial.println();
+//  Serial.print(">>> Delay: ");
+//  Serial.print(requestDelay);
+//  Serial.println("ms");
   delay(requestDelay);
 }
 
@@ -517,7 +514,8 @@ void executeCommands() {
       outlets[i].pinState = pinState;
     }
 
-    if (DEBUG_COMMAND_EXECUTION && pinState != initialPinState) {
+    //if (DEBUG_COMMAND_EXECUTION && pinState != initialPinState) {
+    if (DEBUG_COMMAND_EXECUTION) {
       Serial.print(">>> Pin ");
       Serial.print(outletPin);
       if (outlets[i].pinState == HIGH) {
