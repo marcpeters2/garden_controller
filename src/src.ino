@@ -1,11 +1,8 @@
-//#define DEBUG_COMMAND_EXECUTION false
 #define DEBUG_INTERRUPTS true
 #define DEBUG_HTTP_CALLS true
 #define DEBUG_COMMAND_PARSING true
 #define DEBUG_COMMAND_EXECUTION true
 #define DEBUG_TIME_CHANGES true
-//#define DEBUG_INTERRUPTS true
-//#define DEBUG_HTTP_CALLS true
 
 #include <string.h>
 #include <SPI.h>
