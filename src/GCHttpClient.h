@@ -24,7 +24,7 @@ struct httpEndpoint_t {
 class GCHttpClient {
   public:
     static void debugHttpCalls(bool);
-    static void httpRequest(httpServer_t*, httpEndpoint_t*, String, httpResponse_t*);
+    static void httpRequest(httpServer_t*, httpEndpoint_t*, String, httpResponse_t*, const char** error, unsigned int maxRetries);
 };
 
 #endif

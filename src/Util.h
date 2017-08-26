@@ -9,7 +9,7 @@ class Util {
   public:
     static size_t freeRAM(void);
     static String toString(unsigned long long);
-    static int parseIntFromString(char*);
+    static int parseIntFromString(char*, const char** error);
     static unsigned long long toULL(char*);
     static int charToInt(char c);
     static bool charIsNumeric(char c);

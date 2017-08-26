@@ -1,5 +1,7 @@
 #include "GCHttpClient.h"
 
+#define CONNECTION_RETRY_DELAY 2000
+
 WiFiClient client;
 bool _DEBUG_HTTP_CALLS = true;
 
@@ -7,7 +9,7 @@ void GCHttpClient::debugHttpCalls(bool val) {
   _DEBUG_HTTP_CALLS = val;
 }
 
-void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse) {
+void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, String payload, httpResponse_t* httpResponse, const char** error, unsigned int maxRetries = 1) {
   bool payloadExists = payload.length() > 0;
   HttpParser* httpParser = new HttpParser(httpResponse);;
   bool parseError;
@@ -17,8 +19,11 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
   bool receivedResponse;
   bool done;
 
+  unsigned int numConnectionAttempts = 0;
   unsigned long long lastRequestTime = 0;            // last time you connected to the server, in milliseconds
-  const unsigned long requestTimeout = 4L * 1000L; // delay between updates, in milliseconds
+  const unsigned long requestTimeout = 4L * 1000L;
+
+  //client.setTimeout(1);
 
   while (!done) {
 
@@ -28,9 +33,6 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
     timeout = false;
 
     while (!sentRequest) {
-      // close any connection before send a new request.
-      // This will free the socket on the WiFi shield
-      client.stop();
 
       if(_DEBUG_HTTP_CALLS) {
         Serial.println();
@@ -80,7 +82,19 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
         Serial.print(" ");
         Serial.print(endpoint->path);
         Serial.println(" failed.  Couldn't connect.");
-        delay(2000);
+        Serial.print("Free memory: ");
+        Serial.print(Util::freeRAM());
+        Serial.println("B");
+
+        numConnectionAttempts++;
+
+        if (numConnectionAttempts >= maxRetries) {
+          Serial.println("Max retries reached.  Cancelling HTTP request.");
+          *error = "Unable to connect to server";
+          goto cleanup;
+        }
+        
+        delay(CONNECTION_RETRY_DELAY);
       }
     }
 
@@ -96,6 +110,8 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
       if ((receivedResponse && !client.connected()) || parseError) {
         break;
       }
+
+      delay(10); //Allow other code ie. software serial time to run
     }
 
     if (TimeService::ucNow() - lastRequestTime > requestTimeout) {
@@ -108,7 +124,15 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
     }
 
     if (parseError || timeout) {
-      delay(2000);
+      numConnectionAttempts++;
+      
+      if (numConnectionAttempts >= maxRetries) {
+        Serial.println("Max retries reached.  Cancelling HTTP request.");
+          *error = "Error retrieving response from server (parse error or timeout)";
+          goto cleanup;
+      }
+      
+      delay(CONNECTION_RETRY_DELAY);
     }
     else {
       done = true;
@@ -130,7 +154,10 @@ void GCHttpClient::httpRequest(httpServer_t* server, httpEndpoint_t* endpoint, S
     Serial.println("B");
   }
 
+cleanup:
   delete httpParser;
+  // This will free the socket on the WiFi shield
+  client.stop();
 
   return;
 }

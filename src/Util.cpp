@@ -34,7 +34,7 @@ String Util::toString(unsigned long long x)
   return str;
 }
 
-int Util::parseIntFromString(char* buf) {
+int Util::parseIntFromString(char* buf, const char** error) {
   int index = 0;
   int charAsInt;
   int bufferSize = sizeof(buf) / sizeof(char);

@@ -7,25 +7,33 @@ unsigned long long _wifiLastConnectTimestamp = 0;
 bool WifiService::isConnected() {
   static int lastStatus = WL_IDLE_STATUS;
   int status = WiFi.status();
-
+  bool connected;
+  
   if(lastStatus != WL_CONNECTED && status == WL_CONNECTED) {
+    Serial.println();
     Serial.println("### WiFi Connected!");
     printCurrentNet();
     printWiFiData();
+  } else if (lastStatus == WL_CONNECTED && status != WL_CONNECTED) {
+    Serial.println();
+    Serial.println("!!!");
+    Serial.println("!!! WiFi Disconnected!");
+    Serial.println("!!!");
   }
 
   lastStatus = status;
+
   return status == WL_CONNECTED;
 }
 
 void WifiService::connectToWiFi(const char* ssid, const char* password) {
   //int status = WL_IDLE_STATUS;     // the WiFi radio's status
 
-  int status = WiFi.status();
+  bool isConnected = WifiService::isConnected();
   unsigned long long now = TimeService::ucNow();
   static bool firstCall = true;
 
-  if(status == WL_CONNECTED) {
+  if(isConnected) {
     return;
   }
   else if(firstCall || now - _wifiLastConnectTimestamp > WIFI_CONNECT_TIMEOUT_MS) {

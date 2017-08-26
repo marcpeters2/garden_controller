@@ -49,7 +49,7 @@ void TimeService::slewTime(unsigned int duration, int amount) {
     Serial.print(amount);
     Serial.print("ms over ");
     Serial.print(duration);
-    Serial.println("s");
+    Serial.println("ms");
   }
 }
 

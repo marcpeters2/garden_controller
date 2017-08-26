@@ -20,8 +20,9 @@
 
 httpServer_t server = {
 //  "192.168.43.124",
-  "192.168.1.191",
-  8000,
+//  "192.168.1.191",
+  "thawing-journey-12821.herokuapp.com",
+  80
 };
 
 httpEndpoint_t postControllers = {
@@ -165,6 +166,10 @@ void loop() {
   unsigned long long _time;
   static bool interruptsInitialized = false;
   int drift;
+  const char* error;
+  error = NULL;
+
+  delay(10);  // Insert a delay to allow other code (ie. software serial libraries communicating with the WiFi chip) time to run
 
   networkConnected = WifiService::isConnected();
 
@@ -172,49 +177,54 @@ void loop() {
     WifiService::connectToWiFi(WIFI_SSID, WIFI_PASSWORD);
     return;
   }
+
+//  myId = getMyId(&error);
   
   switch(controllerState) {
     case INITIAL:
-      myId = getMyId();
+      myId = getMyId(&error);
       break;
     case RECEIVED_ID:
-      _time = getServerTime();
-      TimeService::setTime(_time);
+      _time = getServerTime(&error);
+      if(error == NULL) {
+        TimeService::setTime(_time);
+      }
       break;
     case SYNCED_TIME:
-      getCommands();
+      getCommands(&error);
       break;
     case RECEIVED_COMMANDS:
       if (!interruptsInitialized) {
         Util::enableTimer4Interrupts();
         interruptsInitialized = true;  
       }
-      _time = getServerTime();
-      drift = _time - TimeService::now();
-      TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
-      delay(1000);
-      getCommands();
+      _time = getServerTime(&error);
+
+      if(error == NULL) {
+        drift = _time - TimeService::now();
+        TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+        delay(1000);
+        getCommands(&error);
+      }
       break;
     case FETCH_COMMANDS_FAILURE:
       //TODO: Aggressively retry fetching commands here
-      _time = getServerTime();
-      drift = _time - TimeService::now();
-      TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
-      delay(1000);
-      getCommands();
+      _time = getServerTime(&error);
+      if(error == NULL) {
+        drift = _time - TimeService::now();
+        TimeService::slewTime(TIME_CATCHUP_PERIOD, drift); // Linearly approach the correct time over 5 seconds
+        delay(1000);
+        getCommands(&error);
+      }
       break;
   }
 
   //requestDelay = rand() % 3000 + 1000;
   requestDelay = 1000;
-//  Serial.println();
-//  Serial.print(">>> Delay: ");
-//  Serial.print(requestDelay);
-//  Serial.println("ms");
   delay(requestDelay);
 }
 
-int getMyId() {
+int getMyId(const char** error) {
 
   int id;
   byte mac[6];
@@ -243,12 +253,31 @@ int getMyId() {
   payload += "}}";
   
   httpResponse_t httpResponse;
+  const char* requestError;
+  requestError = NULL;
 
-  do {
-    GCHttpClient::httpRequest(&server, &postControllers, payload, &httpResponse);
-  } while(httpResponse.statusCode != 200);
+  GCHttpClient::httpRequest(&server, &postControllers, payload, &httpResponse, &requestError, 1);
 
-  id = Util::parseIntFromString(httpResponse.response);
+  if(requestError != NULL) {
+    *error = "Error making HTTP request";
+    return 0;
+  }
+
+  if (httpResponse.statusCode < 200 && httpResponse.statusCode >= 300) {
+    *error = "HTTP status code indicates error";
+    return 0;
+  }
+
+  const char* parseError = NULL;
+  id = Util::parseIntFromString(httpResponse.response, &parseError);
+
+  if(parseError != NULL) {
+    Serial.println();
+    Serial.println("!!! Error parsing controller ID");
+    *error = "Error parsing controller ID";
+    return 0;
+  }
+  
   Serial.println();
   Serial.print(">>> Setting my id to ");
   Serial.println(id);
@@ -258,17 +287,27 @@ int getMyId() {
   return id;
 }
 
-unsigned long long getServerTime() {
+unsigned long long getServerTime(const char** error) {
 
   unsigned long requestStart = TimeService::ucNow();
   unsigned long long serverTimestamp;
   String payload = "";
 
   httpResponse_t httpResponse;
+  const char* requestError;
+  requestError = NULL;
 
-  do {
-    GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse);
-  } while(httpResponse.statusCode != 200);
+  GCHttpClient::httpRequest(&server, &getTimeRequest, payload, &httpResponse, &requestError, 1);
+
+  if(requestError != NULL) {
+    *error = "Error making HTTP request";
+    return 0;
+  }
+
+  if (httpResponse.statusCode < 200 && httpResponse.statusCode >= 300) {
+    *error = "HTTP status code indicates error";
+    return 0;
+  }
 
   unsigned long requestStop = TimeService::ucNow();
   unsigned long long estimatedLag = (requestStop - requestStart) / 2;
@@ -291,7 +330,7 @@ unsigned long long getServerTime() {
   return serverTimestamp;
 }
 
-void getCommands() {
+void getCommands(const char** error) {
 
   String payload = "";
   String path = (String) "/controllers/" + myId + "/commands";
@@ -302,10 +341,20 @@ void getCommands() {
   };
 
   httpResponse_t httpResponse;
+  const char* requestError;
+  requestError = NULL;
 
-  do {
-    GCHttpClient::httpRequest(&server, &getCommandRequest, payload, &httpResponse);
-  } while(httpResponse.statusCode != 200);
+  GCHttpClient::httpRequest(&server, &getCommandRequest, payload, &httpResponse, &requestError, 1);
+
+  if(requestError != NULL) {
+    *error = "Error making HTTP request";
+    return;
+  }
+
+  if (httpResponse.statusCode < 200 && httpResponse.statusCode >= 300) {
+    *error = "HTTP status code indicates error";
+    return;
+  }
 
   parseCommandString(httpResponse.response);
 
@@ -328,11 +377,13 @@ void parseCommandString(char* commandString) {
   int commandNum = 0;
   commandStringParserState_t state = PARSING_OUTLET_INTERNAL_ID;
   bool error = false;
+  const char* parseError;
 
   resetNextCommandsForAllOutlets();
 
   while(index <= strlen(commandString) && !error) {
     c = commandString[index];
+    parseError = NULL;
     
     switch(state) {
       case PARSING_OUTLET_INTERNAL_ID:
@@ -341,7 +392,12 @@ void parseCommandString(char* commandString) {
           }
           else if(c == ',') {
             stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
-            outletPin = Util::parseIntFromString(charArrayBuf);
+            outletPin = Util::parseIntFromString(charArrayBuf, &parseError);
+            if(parseError != NULL) {
+              Serial.println("!!! Encountered error parsing outlet ID in command string");
+              error = true;
+              break;
+            }
             stringBuf = "";
             state = PARSING_TIMESTAMP;
           } 
@@ -380,7 +436,12 @@ void parseCommandString(char* commandString) {
           }
           else if(c == ',') {
             stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
-            outletStateInt = Util::parseIntFromString(charArrayBuf);
+            outletStateInt = Util::parseIntFromString(charArrayBuf, &parseError);
+            if(parseError != NULL) {
+              Serial.println("!!! Encountered error parsing outlet state in command string");
+              error = true;
+              break;
+            }
             if(outletStateInt == OFF) {
               outletState = OFF;
             }
@@ -410,7 +471,12 @@ void parseCommandString(char* commandString) {
           } 
           else if(c == '\n' || c == '\0') {
             stringBuf.toCharArray(charArrayBuf, sizeof(charArrayBuf));
-            outletStateInt = Util::parseIntFromString(charArrayBuf);
+            outletStateInt = Util::parseIntFromString(charArrayBuf, &parseError);
+            if(parseError != NULL) {
+              Serial.println("!!! Encountered error parsing outlet state in command string");
+              error = true;
+              break;
+            }
             if(outletStateInt == OFF) {
               outletState = OFF;
             }
@@ -572,9 +638,6 @@ void useNextCommands() {
   command_t* temp;
   
   for(int i = 0; i < numOutlets; i++) {
-//    for(int j = 0; j < outlets[i].numNextCommands; j++) {
-//      outlets[i].commands[j] = outlets[i].nextCommands[j];
-//    }
     temp = outlets[i].commands;
     
     Util::noT4interrupts();
