@@ -53,8 +53,8 @@ enum outletType_t {
 };
 
 enum outletState_t {
-  OFF = 0,
-  ON = 1
+  OFF = HIGH,
+  ON = LOW
 };
 
 struct command_t {
@@ -73,10 +73,10 @@ struct outlet_t {
 };
 
 outlet_t outlets[] = {
-  { "A", 0, LOW, 0, 0 },
-  { "B", 1, LOW, 0, 0 },
-  { "C", 2, LOW, 0, 0 },
-  { "D", 3, LOW, 0, 0 },
+  { "A", 0, OFF, 0, 0 },
+  { "B", 1, OFF, 0, 0 },
+  { "C", 2, OFF, 0, 0 },
+  { "D", 3, OFF, 0, 0 },
 };
 
 const int numOutlets = sizeof(outlets) / sizeof(outlet_t);
@@ -109,6 +109,7 @@ void setup() {
 
   initializeOutletPins();
   initializeCommands();
+  
   GCHttpClient::debugHttpCalls(DEBUG_HTTP_CALLS);
   TimeService::debugTimeChanges(DEBUG_TIME_CHANGES);
 
@@ -177,8 +178,7 @@ void loop() {
     WifiService::connectToWiFi(WIFI_SSID, WIFI_PASSWORD);
     return;
   }
-
-//  myId = getMyId(&error);
+  
   
   switch(controllerState) {
     case INITIAL:
@@ -442,10 +442,10 @@ void parseCommandString(char* commandString) {
               error = true;
               break;
             }
-            if(outletStateInt == OFF) {
+            if(outletStateInt == 0) {
               outletState = OFF;
             }
-            else if(outletStateInt == ON) {
+            else if(outletStateInt == 1) {
               outletState = ON;
             }
             else {
@@ -477,10 +477,10 @@ void parseCommandString(char* commandString) {
               error = true;
               break;
             }
-            if(outletStateInt == OFF) {
+            if(outletStateInt == 0) {
               outletState = OFF;
             }
-            else if(outletStateInt == ON) {
+            else if(outletStateInt == 1) {
               outletState = ON;
             }
             else {
@@ -491,7 +491,7 @@ void parseCommandString(char* commandString) {
             }
             
             stringBuf = "";
-            state = PARSING_OUTLET_INTERNAL_ID;\
+            state = PARSING_OUTLET_INTERNAL_ID;
             error = appendOutletNextCommand(outletPin, {outletState, timestamp});
             if(error) { break; }
 
@@ -543,7 +543,7 @@ void executeCommands() {
   int outletPin;
   outletState_t desiredOutletState;
   int initialPinState;
-  int pinState = LOW;
+  int pinState = OFF;
   command_t command;
   bool shouldChangePinState;
   
@@ -565,23 +565,23 @@ void executeCommands() {
       }
     }
 
-    if(desiredOutletState == ON) {
-      pinState = HIGH;
-    }
-    else {
-      pinState = LOW;
-    }
+//    if(desiredOutletState == ON) {
+//      pinState = HIGH;
+//    }
+//    else {
+//      pinState = LOW;
+//    }
 
     if(shouldChangePinState) {
-      digitalWrite(outletPin, pinState);
-      outlets[i].pinState = pinState;
+      digitalWrite(outletPin, desiredOutletState);
+      outlets[i].pinState = desiredOutletState;
     }
 
     //if (DEBUG_COMMAND_EXECUTION && pinState != initialPinState) {
     if (DEBUG_COMMAND_EXECUTION) {
       Serial.print(">>> Pin ");
       Serial.print(outletPin);
-      if (outlets[i].pinState == HIGH) {
+      if (outlets[i].pinState == ON) {
         Serial.print(" ON (time: ");
       }
       else {
@@ -658,8 +658,8 @@ void initializeOutletPins() {
     Serial.print(outlets[i].internalName);
     Serial.println(") to OUTPUT");
     pinMode(outlets[i].pin, OUTPUT);
-    digitalWrite(outlets[i].pin, LOW);
-    outlets[i].pinState = LOW;
+    digitalWrite(outlets[i].pin, OFF);
+    outlets[i].pinState = OFF;
   }
 }
 
